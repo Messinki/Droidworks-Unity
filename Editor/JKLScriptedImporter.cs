@@ -26,7 +26,7 @@ namespace Droidworks.JKL.Editor
             // 1. Find and Load Colormap (Try "mission.cmp" in standard paths)
             CmpPalette palette = FindAndLoadPalette(ctx.assetPath);
             if (palette == null) Debug.LogError($"[JKLImporter] Failed to find palette for {ctx.assetPath}");
-            else Debug.Log($"[JKLImporter] Loaded palette from {palette.Name}");
+            else Debug.Log($"[JKLImporter] Loaded palette (Colors: {palette.Colors.Length})");
 
             // 2. Load Materials
             // Map JKL Material Index -> (Material, TextureWidth, TextureHeight)
