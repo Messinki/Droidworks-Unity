@@ -354,13 +354,17 @@ namespace Droidworks.JKL.Editor
 
             foreach (var path in candidates)
             {
-                if (!Directory.Exists(path)) continue;
+                if (!Directory.Exists(path)) 
+                {
+                    // Debug.Log($"[JKLImporter] Candidate path does not exist: {path}");
+                    continue;
+                }
 
                 // Case-Insensitive Search
                 // targetName is e.g. "00t_wall.jmat"
                 // file might be "00t_wall.jmat" or "00T_WALL.jmat"
                 
-                var files = Directory.GetFiles(path);
+                var files = Directory.GetFiles(path); // This might be slow if folder is huge
                 foreach (var f in files)
                 {
                     string fname = Path.GetFileName(f);
@@ -373,6 +377,9 @@ namespace Droidworks.JKL.Editor
                         return f;
                 }
             }
+            
+            // Debug failure
+            Debug.LogWarning($"[JKLImporter] FindFile Failed for {targetName}. Checked: {string.Join(", ", candidates)}");
              
              return null;
         }
