@@ -67,18 +67,28 @@ namespace Droidworks.JKL.Editor
                         try { textures = matParser.Parse(jmatPath); }
                         catch (System.Exception e) { Debug.LogError($"[JKLImporter] Failed to parse {jmatName}: {e}"); }
 
+                        if (textures == null || textures.Count == 0)
+                        {
+                             Debug.LogWarning($"[JKLImporter] JMAT parsed 0 textures: {jmatPath}");
+                        }
+
                         if (textures != null && textures.Count > 0)
                         {
-                            var texData = textures[0]; // Use first texture (mipmap 0 usually)
+                            var texData = textures[0];
                             w = texData.Width;
                             h = texData.Height;
                             
+                            Debug.Log($"[JKLImporter] Texture: {texData.Name} ({w}x{h}, Trans:{texData.Transparent}). First Px: {texData.Pixels[0]}");
+
                             // Create Texture
                             var texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
                             texture.name = texData.Name;
-                            texture.filterMode = FilterMode.Point; // Retro feel
+                            texture.filterMode = FilterMode.Point; 
                             texture.SetPixels32(texData.Pixels);
                             texture.Apply();
+
+                            // Verify Shader
+                            if (defaultShader == null) Debug.LogError("[JKLImporter] Shader is NULL!");
 
                             // Create Material
                             unityMat = new Material(defaultShader);
@@ -89,6 +99,8 @@ namespace Droidworks.JKL.Editor
                             {
                                 unityMat.SetTexture("_BaseMap", texture);
                                 unityMat.SetColor("_BaseColor", Color.white);
+                                // Safety: Set _MainTex too, just in case
+                                unityMat.SetTexture("_MainTex", texture);
                             }
                             else
                             {
