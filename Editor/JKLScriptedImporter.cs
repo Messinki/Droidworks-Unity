@@ -28,7 +28,7 @@ namespace Droidworks.JKL.Editor
             }
 
             // 2. Load Palette
-            CmpPalette palette = FindAndLoadPalette(ctx.assetPath);
+            CmpPalette palette = ImporterUtils.FindAndLoadPalette(ctx.assetPath);
             if (palette != null) Debug.Log($"[JKLImporter] Palette Loaded (Colors: {palette.Colors.Length})");
             else Debug.LogError("[JKLImporter] Palette NOT found! Textures will fail.");
 
@@ -36,8 +36,8 @@ namespace Droidworks.JKL.Editor
             var loadedMats = new Dictionary<int, (Material mat, int w, int h)>();
             
             // Helper to get render pipeline shader
-            Shader defaultShader = GetDefaultShader();
-            bool isURP = IsURP();
+            Shader defaultShader = ImporterUtils.GetDefaultShader();
+            bool isURP = ImporterUtils.IsURP();
             Debug.Log($"[JKLImporter] Render Pipeline: {(isURP ? "URP" : "Standard")}");
 
             for (int i = 0; i < model.Materials.Count; i++)
@@ -51,7 +51,7 @@ namespace Droidworks.JKL.Editor
                 // 3a. Special Case: Mat 0 (Sky/Clip) - Transparent
                 if (i == 0)
                 {
-                    unityMat = CreateTransparentMaterial(jklMat.Name, defaultShader, isURP);
+                    unityMat = ImporterUtils.CreateTransparentMaterial(jklMat.Name, defaultShader, isURP);
                     Debug.Log($"[JKLImporter] Mat 0 (Sky/Clip): {unityMat.name}");
                     
                     // Save the dummy texture we assigned to Mat 0
@@ -63,7 +63,7 @@ namespace Droidworks.JKL.Editor
                 else
                 {
                     // 3b. Find .jmat file
-                    string jmatPath = FindFile(ctx.assetPath, jklMat.Name, jmatName);
+                    string jmatPath = ImporterUtils.FindFile(ctx.assetPath, jklMat.Name, jmatName);
                     
                     if (!string.IsNullOrEmpty(jmatPath))
                     {
@@ -115,7 +115,7 @@ namespace Droidworks.JKL.Editor
                             }
                             
                             // Retro Matte Look
-                            DisableShininess(unityMat, isURP);
+                            ImporterUtils.DisableShininess(unityMat, isURP);
                             
                             // CRITICAL: Add texture to asset context so it is saved!
                             ctx.AddObjectToAsset($"tex_{i}", texture);
@@ -123,7 +123,7 @@ namespace Droidworks.JKL.Editor
                             // Transparency
                             if (texData.Transparent)
                             {
-                                SetupCutoutMaterial(unityMat, isURP);
+                                ImporterUtils.SetupCutoutMaterial(unityMat, isURP);
                             }
                         }
                     }
@@ -259,202 +259,6 @@ namespace Droidworks.JKL.Editor
             }
 
             return verts.Count - 1;
-        }
-
-        private CmpPalette FindAndLoadPalette(string assetPath)
-        {
-            try
-            {
-                string dir = Path.GetDirectoryName(assetPath);
-                
-                // Strategy: Search up parents, looking for "mission.cmp" in standard locations
-                // or any ".cmp" if close by.
-                
-                // 1. Recursive search for "mission.cmp" starting from closest "mission" parent
-                string searchDir = dir;
-                while(!string.IsNullOrEmpty(searchDir))
-                {
-                    // Check local "cmp" folder
-                    string localCmpDir = Path.Combine(searchDir, "cmp");
-                    if (Directory.Exists(localCmpDir))
-                    {
-                         var cmps = Directory.GetFiles(localCmpDir, "*.cmp");
-                         if(cmps.Length > 0) return CmpParser.Parse(cmps[0]);
-                    }
-
-                    // Check for "mission.cmp" recursively if inside a folder named "mission" (common in JK extraction)
-                    if (Path.GetFileName(searchDir).Equals("mission", System.StringComparison.OrdinalIgnoreCase))
-                    {
-                         var found = Directory.GetFiles(searchDir, "mission.cmp", SearchOption.AllDirectories);
-                         if (found.Length > 0) return CmpParser.Parse(found[0]);
-                    }
-                    
-                    searchDir = Path.GetDirectoryName(searchDir);
-                    if (searchDir.Contains("Assets") == false) break; // Don't go outside Assets
-                }
-                
-                // 2. Fallback: Check local dir
-                var localFiles = Directory.GetFiles(dir, "*.cmp");
-                if (localFiles.Length > 0) return CmpParser.Parse(localFiles[0]);
-
-            }
-            catch(System.Exception e)
-            {
-                Debug.LogError($"[JKLImporter] Palette Search Error: {e}");
-            }
-            return null;
-        }
-
-        private string FindFile(string assetPath, string jklName, string jmatName)
-        {
-            string baseDir = Path.GetDirectoryName(assetPath);
-            string parentDir = Path.GetDirectoryName(baseDir);
-
-            // Paths from Blender Addon (ImportSithJKL.py)
-            // base_dir
-            // base_dir/mat
-            // base_dir/3do/mat
-            // parent/mat
-            // parent/3do/mat
-            
-            var paths = new List<string>();
-            paths.Add(baseDir);
-            paths.Add(Path.Combine(baseDir, "mat"));
-            paths.Add(Path.Combine(baseDir, "3do", "mat"));
-            
-            if(!string.IsNullOrEmpty(parentDir))
-            {
-                paths.Add(Path.Combine(parentDir, "mat"));
-                paths.Add(Path.Combine(parentDir, "3do", "mat"));
-            }
-
-            // Allow loose checking
-            foreach(var p in paths)
-            {
-                if (!Directory.Exists(p)) continue;
-                
-                // Check for jmatName (likely lowercase via Path.ChangeExtension) and jklName (original)
-                var files = Directory.GetFiles(p);
-                foreach(var f in files)
-                {
-                    string fname = Path.GetFileName(f);
-                    if (fname.Equals(jmatName, System.StringComparison.OrdinalIgnoreCase) ||
-                        fname.Equals(jklName, System.StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Debug.Log($"[JKLImporter] Found {jmatName} at {f}");
-                        return f;
-                    }
-                }
-            }
-             
-            // Debug.LogWarning($"[JKLImporter] Not Found: {jmatName}. Searched: {string.Join(", ", paths)}");
-            return null;
-        }
-
-        // --- Shader Helpers ---
-
-        private Material CreateTransparentMaterial(string name, Shader shader, bool isURP)
-        {
-            // For true invisibility in URP, Unlit is safer than Lit as it ignores all lighting/reflections
-            Shader transparentShader = isURP ? Shader.Find("Universal Render Pipeline/Unlit") : shader;
-            if (transparentShader == null) transparentShader = shader; // Fallback
-            
-            var mat = new Material(transparentShader);
-            mat.name = name;
-            
-            // Generate 1x1 Transparent Texture
-            var tex = new Texture2D(1, 1);
-            tex.SetPixel(0, 0, new Color(1, 1, 1, 0)); 
-            tex.Apply();
-            tex.name = name + "_TransTex";
-            
-            if (isURP)
-            {
-                mat.SetFloat("_Surface", 1); // Transparent
-                mat.SetFloat("_Blend", 0); // Alpha
-                mat.SetColor("_BaseColor", new Color(1, 1, 1, 0.0f));
-                mat.SetTexture("_BaseMap", tex);
-                
-                mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-                mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-                mat.renderQueue = 3000;
-                
-                // No need to disable shininess for Unlit, but doesn't hurt to be safe against Shader Graph variants
-                mat.SetFloat("_Smoothness", 0.0f); 
-            }
-            else
-            {
-                mat.SetFloat("_Mode", 3); // Transparent
-                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                mat.SetInt("_ZWrite", 0);
-                mat.DisableKeyword("_ALPHATEST_ON");
-                mat.DisableKeyword("_ALPHABLEND_ON");
-                mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-                mat.renderQueue = 3000;
-                mat.color = new Color(1,1,1, 0.0f);
-                mat.mainTexture = tex;
-                
-                DisableShininess(mat, false);
-            }
-            return mat;
-        }
-
-        private void DisableShininess(Material mat, bool isURP)
-        {
-            if (isURP)
-            {
-                mat.SetFloat("_Smoothness", 0.0f);
-                mat.SetFloat("_SpecularHighlights", 0.0f);
-                mat.SetFloat("_EnvironmentReflections", 0.0f);
-                mat.DisableKeyword("_SPECULARAGLOSSMAP");
-                mat.DisableKeyword("_SPECULARHIGHLIGHTS_OFF"); 
-                mat.EnableKeyword("_SPECULARHIGHLIGHTS_OFF"); // Force Off?
-                mat.EnableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
-            }
-            else
-            {
-                mat.SetFloat("_Glossiness", 0.0f);
-                mat.SetFloat("_SpecularHighlights", 0.0f);
-                mat.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
-                mat.SetFloat("_GlossyReflections", 0.0f);
-                mat.EnableKeyword("_GLOSSYREFLECTIONS_OFF");
-            }
-        }
-
-        private void SetupCutoutMaterial(Material mat, bool isURP)
-        {
-            if (isURP)
-            {
-                mat.SetFloat("_AlphaClip", 1);
-                mat.SetFloat("_Cutoff", 0.5f);
-            }
-            else
-            {
-                mat.SetFloat("_Mode", 1); // Cutout
-                mat.EnableKeyword("_ALPHATEST_ON");
-                mat.renderQueue = 2450;
-            }
-        }
-
-        private Shader GetDefaultShader()
-        {
-             if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
-            {
-                var pipe = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name;
-                if (pipe.Contains("Universal")) return Shader.Find("Universal Render Pipeline/Lit");
-                if (pipe.Contains("HDRenderPipeline")) return Shader.Find("HDRP/Lit");
-            }
-            return Shader.Find("Standard");
-        }
-
-        private bool IsURP()
-        {
-             if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
-             {
-                 return UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name.Contains("Universal");
-             }
-             return false;
         }
     }
 }
