@@ -250,8 +250,8 @@ namespace Droidworks.JKL.Editor
             if (uvIdx >= 0 && uvIdx < model.TextureVertices.Count)
             {
                 Vector2 raw = model.TextureVertices[uvIdx];
-                // Normalization: raw / dimension
-                uvs.Add(new Vector2(raw.x / w, raw.y / h));
+                // Normalization: raw / dimension (flipY=false for JKL)
+                uvs.Add(ImporterUtils.SithPixelToUnityUV(raw, w, h, false));
             }
             else
             {

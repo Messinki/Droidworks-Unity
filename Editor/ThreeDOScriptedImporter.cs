@@ -187,8 +187,8 @@ namespace Droidworks.ThreeDO.Editor
                     v += pivotOffset; 
                     
                     Vector2 uvRaw = (uvIdx < meshDef.UVs.Count) ? meshDef.UVs[uvIdx] : Vector2.zero;
-                    // Pixel UVs -> 0-1 UVs. Negate Y because 3DO uses negative Y (down) and Unity texture is physically flipped by SetPixels.
-                    Vector2 uv = new Vector2(uvRaw.x / w, -uvRaw.y / h);
+                    // Pixel UVs -> 0-1 UVs. Negate Y (flipY=true) for 3DO
+                    Vector2 uv = ImporterUtils.SithPixelToUnityUV(uvRaw, (int)w, (int)h, true);
                     
                     newVerts.Add(v);
                     newUVs.Add(uv);

@@ -228,5 +228,22 @@ namespace Droidworks.JKL.Editor
             
             return qYaw * qPitch * qRoll;
         }
+
+        /// <summary>
+        /// Converts Sith Engine pixel-based Texture Coordinates to Unity (0-1) UVs.
+        /// </summary>
+        /// <param name="pixelUV">Raw UV from file (usually in pixels)</param>
+        /// <param name="width">Texture width</param>
+        /// <param name="height">Texture height</param>
+        /// <param name="flipY">Whether to negate Y (needed for 3DOs which often use top-down coords)</param>
+        public static Vector2 SithPixelToUnityUV(Vector2 pixelUV, int width, int height, bool flipY)
+        {
+            float u = pixelUV.x / (float)width;
+            float v = pixelUV.y / (float)height;
+            
+            if (flipY) v = -v;
+            
+            return new Vector2(u, v);
+        }
     }
 }
