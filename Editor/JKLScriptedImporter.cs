@@ -84,7 +84,7 @@ namespace Droidworks.JKL.Editor
                             w = texData.Width;
                             h = texData.Height;
                             
-                            Debug.Log($"[JKLImporter] Texture: {texData.Name} ({w}x{h}, Trans:{texData.Transparent}). First Px: {texData.Pixels[0]}");
+                            // Debug.Log($"[JKLImporter] Texture: {texData.Name} ({w}x{h}, Trans:{texData.Transparent}). First Px: {texData.Pixels[0]}");
 
                             // Create Texture
                             var texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
@@ -135,11 +135,8 @@ namespace Droidworks.JKL.Editor
                 {
                     unityMat = new Material(defaultShader);
                     unityMat.name = $"{jklMat.Name}_MISSING";
-                    // Debug: Use Yellow to distinguish from Unity's default Pink
-                    if (isURP) unityMat.SetColor("_BaseColor", Color.yellow);
-                    else unityMat.color = Color.yellow;
-                    
-                    Debug.LogWarning($"[JKLImporter] Assigning FALLBACK YELLOW material for {jklMat.Name}");
+                    if (isURP) unityMat.SetColor("_BaseColor", Color.magenta);
+                    else unityMat.color = Color.magenta;
                 }
 
                 ctx.AddObjectToAsset($"mat_{i}", unityMat);
@@ -156,14 +153,16 @@ namespace Droidworks.JKL.Editor
             var surfacesByMat = new Dictionary<int, List<Droidworks.JKL.JKLSurface>>();
             foreach(var s in model.Surfaces)
             {
-                if (s.MaterialIndex < 0 || s.MaterialIndex >= model.Materials.Count)
+                int effectiveIndex = s.MaterialIndex;
+                if (effectiveIndex < 0 || effectiveIndex >= model.Materials.Count)
                 {
-                    Debug.LogError($"[JKLImporter] Surface refs Invalid Material Index: {s.MaterialIndex} (Max {model.Materials.Count})");
-                    continue;
+                    // Fallback to Material 0 (Sky/Clip) to match Blender behavior (default logic)
+                    // This prevents holes in the mesh for invalid surfaces
+                    effectiveIndex = 0;
                 }
                 
-                if(!surfacesByMat.ContainsKey(s.MaterialIndex)) surfacesByMat[s.MaterialIndex] = new List<Droidworks.JKL.JKLSurface>();
-                surfacesByMat[s.MaterialIndex].Add(s);
+                if(!surfacesByMat.ContainsKey(effectiveIndex)) surfacesByMat[effectiveIndex] = new List<Droidworks.JKL.JKLSurface>();
+                surfacesByMat[effectiveIndex].Add(s);
             }
 
             var sortedMatIndices = surfacesByMat.Keys.ToList();
