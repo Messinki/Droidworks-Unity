@@ -114,6 +114,9 @@ namespace Droidworks.JKL.Editor
                                 unityMat.color = Color.white;
                             }
                             
+                            // Retro Matte Look
+                            DisableShininess(unityMat, isURP);
+                            
                             // CRITICAL: Add texture to asset context so it is saved!
                             ctx.AddObjectToAsset($"tex_{i}", texture);
 
@@ -378,6 +381,8 @@ namespace Droidworks.JKL.Editor
                 mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
                 mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
                 mat.renderQueue = 3000;
+                
+                DisableShininess(mat, true);
             }
             else
             {
@@ -391,8 +396,32 @@ namespace Droidworks.JKL.Editor
                 mat.renderQueue = 3000;
                 mat.color = new Color(1,1,1, 0.0f);
                 mat.mainTexture = tex;
+                
+                DisableShininess(mat, false);
             }
             return mat;
+        }
+
+        private void DisableShininess(Material mat, bool isURP)
+        {
+            if (isURP)
+            {
+                mat.SetFloat("_Smoothness", 0.0f);
+                mat.SetFloat("_SpecularHighlights", 0.0f);
+                mat.SetFloat("_EnvironmentReflections", 0.0f);
+                mat.DisableKeyword("_SPECULARAGLOSSMAP");
+                mat.DisableKeyword("_SPECULARHIGHLIGHTS_OFF"); 
+                mat.EnableKeyword("_SPECULARHIGHLIGHTS_OFF"); // Force Off?
+                mat.EnableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+            }
+            else
+            {
+                mat.SetFloat("_Glossiness", 0.0f);
+                mat.SetFloat("_SpecularHighlights", 0.0f);
+                mat.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
+                mat.SetFloat("_GlossyReflections", 0.0f);
+                mat.EnableKeyword("_GLOSSYREFLECTIONS_OFF");
+            }
         }
 
         private void SetupCutoutMaterial(Material mat, bool isURP)
