@@ -192,8 +192,8 @@ namespace Droidworks.JKL.Editor
                         int idx2 = AddVertex(surf.VertexIndices[k+1], surf.TextureVertexIndices[k+1], model, newVertices, newUVs, tw, th);
 
                         subTriangles.Add(idx0);
-                        subTriangles.Add(idx1);
                         subTriangles.Add(idx2);
+                        subTriangles.Add(idx1);
                     }
                 }
                 finalTriangles.Add(subTriangles);
