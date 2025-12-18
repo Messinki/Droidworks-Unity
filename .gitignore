@@ -1,0 +1,23 @@
+# System
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Unity / IDE
+*.csproj
+*.sln
+.idea/
+.vscode/
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+
+# Unity Package
+*.meta

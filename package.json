@@ -1,0 +1,18 @@
+{
+  "name": "com.droidworks.jkl",
+  "version": "0.0.1",
+  "displayName": "JKL Importer",
+  "description": "Imports Jedi Knight: Dark Forces II levels (.jkl) as geometry.",
+  "unity": "2021.3",
+  "documentationUrl": "https://example.com/",
+  "keywords": [
+    "jkl",
+    "importer",
+    "starwars"
+  ],
+  "author": {
+    "name": "Antigravity",
+    "email": "antigravity@example.com",
+    "url": "https://example.com"
+  }
+}
