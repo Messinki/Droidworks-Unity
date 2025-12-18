@@ -59,6 +59,18 @@ namespace Droidworks.JKL
                     {
                         ParseVertices(model);
                     }
+                    else if (sub.Equals("texture", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string sub2 = GetToken();
+                        if (sub2.Equals("vertices", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ParseTextureVertices(model);
+                        }
+                    }
+                    else if (sub.Equals("materials", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ParseMaterials(model);
+                    }
                     else if (sub.Equals("surfaces", StringComparison.OrdinalIgnoreCase))
                     {
                         ParseSurfaces(model);
@@ -71,78 +83,94 @@ namespace Droidworks.JKL
 
         private void ParseVertices(JKLModel model)
         {
-            // Format: Count \n index: x y z
             int count = GetInt();
-            
             for (int i = 0; i < count; i++)
             {
-                // Index might be "0:" or "0" then ":"
                 string idxToken = GetToken();
-                if (!idxToken.EndsWith(":"))
-                {
-                    // Check if next token is colon
-                    // But our GetToken might skip whitespace.
-                    // The standard JKL is "0: 1.0 2.0 3.0"
-                    // If GetToken returns "0", the next one should be ":"
-                    // We can just consume it if it is a colon.
-                    PeekTokenAndConsume(":"); 
-                }
+                if (!idxToken.EndsWith(":")) PeekTokenAndConsume(":");
 
                 float x = GetFloat();
                 float y = GetFloat();
                 float z = GetFloat();
                 
-                // JKL is typically Z-up? Unity is Y-up.
-                // Standard conversion: Unity (x, y, z) = JKL (x, z, y) usually?
-                // Or maybe (x, -z, y)? 
-                // Let's stick to raw coordinates first, then adjust in Importer if needed.
-                // The Python script did: Vector3(x, y, z).to_blender() -> (x, y, z).
-                // Blender is Z-up. Unity is Y-up.
-                // So (x, y, z) in JKL (Z-up) -> (x, z, y) in Unity.
-                
+                // Unity (x, z, y) swap for Y-up
                 model.Vertices.Add(new Vector3(x, z, y)); 
+            }
+        }
+
+        private void ParseTextureVertices(JKLModel model)
+        {
+            int count = GetInt();
+            for (int i = 0; i < count; i++)
+            {
+                string idxToken = GetToken();
+                if (!idxToken.EndsWith(":")) PeekTokenAndConsume(":");
+
+                float u = GetFloat();
+                float v = GetFloat();
+                
+                model.TextureVertices.Add(new Vector2(u, v));
+            }
+        }
+
+        private void ParseMaterials(JKLModel model)
+        {
+            int count = GetInt();
+            for (int i = 0; i < count; i++)
+            {
+                // Index check
+                string token = GetToken();
+                if (token.Equals("end", StringComparison.OrdinalIgnoreCase)) break;
+
+                // Handle index 0:
+                if (!token.EndsWith(":")) PeekTokenAndConsume(":");
+                
+                string file = GetToken();
+                float xTile = GetFloat();
+                float yTile = GetFloat();
+
+                model.Materials.Add(new JKLMaterial 
+                { 
+                    Name = file, 
+                    XTile = xTile, 
+                    YTile = yTile 
+                });
             }
         }
 
         private void ParseSurfaces(JKLModel model)
         {
-            // Format: Count \n 0: mat flags ... 
-            int count = GetInt();
+            int count = GetInt(); // 0: mat ...
 
             for (int i = 0; i < count; i++)
             {
-                 // Index
                 string idxToken = GetToken();
                 if (!idxToken.EndsWith(":")) PeekTokenAndConsume(":");
 
-                int matIdx = GetInt(); // Material Index
+                int matIdx = GetInt(); 
 
-                // Skip 7 fields: surf, face, geo, light, tex, adjoin, extra
+                // Skip 7 fields
                 for (int k = 0; k < 7; k++) GetToken();
 
-                int nMsgVerts = GetInt(); // Number of vertices in face
+                int nMsgVerts = GetInt(); 
 
                 var surface = new JKLSurface();
                 surface.MaterialIndex = matIdx;
 
                 for (int k = 0; k < nMsgVerts; k++)
                 {
-                    // Vertex format in surface: vertIdx, texVertIdx
-                    // Can be "0, 0" or "0,0"
-                    // GetInt stops at comma?
-                    
-                    // My simple GetToken splits by whitespace. 
-                    // If "0,0" is one token, we need to split it.
+                    // v,tv 
                     string pair = GetToken();
                     string[] parts = pair.Split(',');
                     
                     int vIdx = int.Parse(parts[0]);
-                    // int tvIdx = int.Parse(parts[1]); // Ignore texture idx for now
+                    int tvIdx = (parts.Length > 1) ? int.Parse(parts[1]) : 0;
 
                     surface.VertexIndices.Add(vIdx);
+                    surface.TextureVertexIndices.Add(tvIdx);
                 }
                 
-                // Skip Intensities (nMsgVerts floats)
+                // Skip Intensities 
                 for (int k = 0; k < nMsgVerts; k++) GetFloat();
 
                 model.Surfaces.Add(surface);
