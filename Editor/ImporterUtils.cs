@@ -241,7 +241,7 @@ namespace Droidworks.JKL.Editor
             float u = pixelUV.x / (float)width;
             float v = pixelUV.y / (float)height;
             
-            if (flipY) v = -v;
+            if (flipY) v = 1.0f - v;
             
             return new Vector2(u, v);
         }
