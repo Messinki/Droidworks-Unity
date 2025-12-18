@@ -135,8 +135,11 @@ namespace Droidworks.JKL.Editor
                 {
                     unityMat = new Material(defaultShader);
                     unityMat.name = $"{jklMat.Name}_MISSING";
-                    if (isURP) unityMat.SetColor("_BaseColor", Color.magenta);
-                    else unityMat.color = Color.magenta;
+                    // Debug: Use Yellow to distinguish from Unity's default Pink
+                    if (isURP) unityMat.SetColor("_BaseColor", Color.yellow);
+                    else unityMat.color = Color.yellow;
+                    
+                    Debug.LogWarning($"[JKLImporter] Assigning FALLBACK YELLOW material for {jklMat.Name}");
                 }
 
                 ctx.AddObjectToAsset($"mat_{i}", unityMat);
@@ -144,19 +147,21 @@ namespace Droidworks.JKL.Editor
             }
 
             // 4. Build Mesh
-            // Groups surfaces by material to create submeshes
-            // Re-indexes vertices to ensure UVs are unique per vertex
-            
             var mesh = new Mesh();
             mesh.name = model.Name;
 
             var newVertices = new List<Vector3>();
             var newUVs = new List<Vector2>();
             
-            // Group surfaces by material index
             var surfacesByMat = new Dictionary<int, List<Droidworks.JKL.JKLSurface>>();
             foreach(var s in model.Surfaces)
             {
+                if (s.MaterialIndex < 0 || s.MaterialIndex >= model.Materials.Count)
+                {
+                    Debug.LogError($"[JKLImporter] Surface refs Invalid Material Index: {s.MaterialIndex} (Max {model.Materials.Count})");
+                    continue;
+                }
+                
                 if(!surfacesByMat.ContainsKey(s.MaterialIndex)) surfacesByMat[s.MaterialIndex] = new List<Droidworks.JKL.JKLSurface>();
                 surfacesByMat[s.MaterialIndex].Add(s);
             }
