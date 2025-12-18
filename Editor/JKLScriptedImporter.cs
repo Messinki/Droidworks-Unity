@@ -108,25 +108,15 @@ namespace Droidworks.JKL.Editor
             // But JKL surfaces share geometric vertices but have Unique UVs per face-vertex.
             // So we CANNOT simply set mesh.vertices = model.Vertices.
             // We must UNROLL the mesh so that every triangle vertex has its own UV.
-            // (Or just duplicate vertices where UVs differ, but unrolling everything is safer/easier for import)
 
             List<Vector3> newVertices = new List<Vector3>();
             List<Vector2> newUVs = new List<Vector2>();
-            List<int> newTriangles = new List<int>();
             
             // Submeshes for Materials
             // We need to group triangles by material.
-            // Map: MaterialIndex -> List of Triangles (indices into newVertices)
-            // But Unity submeshes map to Material list on Renderer.
+            // Map: MaterialIndex -> List of Indices
             
-            // Let's create a mapping of unique (VertexIndex, TextureVertexIndex) -> NewIndex
-            // To optimize slightly (optional, but good practice).
-            
-            // Actually, since we need to group by Material for submeshes, let's do that.
             // 1. Group Surfaces by MaterialIndex
-            // 2. For each Material Group, generate Triangles.
-            
-            // Find distinct material indices used
             var usedMatIndices = new HashSet<int>();
             foreach (var s in model.Surfaces) usedMatIndices.Add(s.MaterialIndex);
             
@@ -135,19 +125,20 @@ namespace Droidworks.JKL.Editor
 
             List<Material> rendererMaterials = new List<Material>();
             
-            // For each Used Material
-            mesh.subMeshCount = sortedMatIndices.Count;
-            
+            // Store triangles for later assignment
+            var submeshTriangles = new List<List<int>>();
+
             for (int subMeshIdx = 0; subMeshIdx < sortedMatIndices.Count; subMeshIdx++)
             {
                 int matIdx = sortedMatIndices[subMeshIdx];
                 var triIndices = new List<int>();
+                submeshTriangles.Add(triIndices);
                 
                 // Get corresponding Unity Material
                 if (loadedMats.ContainsKey(matIdx))
                     rendererMaterials.Add(loadedMats[matIdx].Item1);
                 else
-                    rendererMaterials.Add(null); // Should have been created above even if missing
+                    rendererMaterials.Add(null); 
 
                 // Get Texture Dimensions for UV Normalization
                 int texW = 64, texH = 64;
@@ -184,12 +175,19 @@ namespace Droidworks.JKL.Editor
                         triIndices.Add(idx2);
                     }
                 }
-                
-                mesh.SetTriangles(triIndices, subMeshIdx);
             }
 
+            // Assign to Mesh
+            // CRITICAL: Set Vertices BEFORE SetTriangles
             mesh.SetVertices(newVertices);
             mesh.SetUVs(0, newUVs);
+            
+            mesh.subMeshCount = sortedMatIndices.Count;
+            for (int i = 0; i < submeshTriangles.Count; i++)
+            {
+               mesh.SetTriangles(submeshTriangles[i], i);
+            }
+
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
