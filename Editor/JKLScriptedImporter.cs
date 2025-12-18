@@ -355,34 +355,32 @@ namespace Droidworks.JKL.Editor
 
         private Material CreateTransparentMaterial(string name, Shader shader, bool isURP)
         {
-            var mat = new Material(shader);
+            // For true invisibility in URP, Unlit is safer than Lit as it ignores all lighting/reflections
+            Shader transparentShader = isURP ? Shader.Find("Universal Render Pipeline/Unlit") : shader;
+            if (transparentShader == null) transparentShader = shader; // Fallback
+            
+            var mat = new Material(transparentShader);
             mat.name = name;
             
-            // Generate 1x1 Transparent Texture to ensure shader is happy
+            // Generate 1x1 Transparent Texture
             var tex = new Texture2D(1, 1);
-            tex.SetPixel(0, 0, new Color(1, 1, 1, 0)); // Fully Transparent
+            tex.SetPixel(0, 0, new Color(1, 1, 1, 0)); 
             tex.Apply();
             tex.name = name + "_TransTex";
-            
-            // We can't easier add to asset context from here without passing ctx.
-            // For now, let's just create it. Ideally it should be added to ctx in the main loop.
-            // But since this helper is called from main loop, we can just return mat and let main loop handle texture? 
-            // No, main loop expects mat. 
-            // Let's rely on standard shader properties.
             
             if (isURP)
             {
                 mat.SetFloat("_Surface", 1); // Transparent
                 mat.SetFloat("_Blend", 0); // Alpha
-                mat.SetColor("_BaseColor", new Color(1, 1, 1, 0.0f)); // 0 Alpha
+                mat.SetColor("_BaseColor", new Color(1, 1, 1, 0.0f));
                 mat.SetTexture("_BaseMap", tex);
-                mat.SetTexture("_MainTex", tex);
                 
                 mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
                 mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
                 mat.renderQueue = 3000;
                 
-                DisableShininess(mat, true);
+                // No need to disable shininess for Unlit, but doesn't hurt to be safe against Shader Graph variants
+                mat.SetFloat("_Smoothness", 0.0f); 
             }
             else
             {
