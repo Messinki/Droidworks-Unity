@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEditor.AssetImporters;
 using System.IO;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Droidworks.JKL.Editor
 {
@@ -10,12 +11,15 @@ namespace Droidworks.JKL.Editor
     {
         public override void OnImportAsset(AssetImportContext ctx)
         {
+            Debug.Log($"[JKLImporter] Starting import for: {ctx.assetPath}");
+
+            // 1. Parse JKL Model
             var parser = new JKLParser();
             JKLModel model = null;
-            
             try
             {
                 model = parser.Parse(ctx.assetPath);
+                Debug.Log($"[JKLImporter] Parsed JKL: {model.Name}, Verts: {model.Vertices.Count}, Surfs: {model.Surfaces.Count}");
             }
             catch (System.Exception e)
             {
@@ -23,226 +27,348 @@ namespace Droidworks.JKL.Editor
                 return;
             }
 
-            // 1. Find and Load Colormap (Try "mission.cmp" in standard paths)
+            // 2. Load Palette
             CmpPalette palette = FindAndLoadPalette(ctx.assetPath);
-            if (palette == null) Debug.LogError($"[JKLImporter] Failed to find palette for {ctx.assetPath}");
-            else Debug.Log($"[JKLImporter] Loaded palette (Colors: {palette.Colors.Length})");
+            if (palette != null) Debug.Log($"[JKLImporter] Palette Loaded (Colors: {palette.Colors.Length})");
+            else Debug.LogError("[JKLImporter] Palette NOT found! Textures will fail.");
 
-            // 2. Load Materials
-            // Map JKL Material Index -> (Material, TextureWidth, TextureHeight)
-            var loadedMats = new Dictionary<int, (Material, int, int)>();
+            // 3. Load Materials & Textures
+            var loadedMats = new Dictionary<int, (Material mat, int w, int h)>();
             
+            // Helper to get render pipeline shader
+            Shader defaultShader = GetDefaultShader();
+            bool isURP = IsURP();
+            Debug.Log($"[JKLImporter] Render Pipeline: {(isURP ? "URP" : "Standard")}");
+
             for (int i = 0; i < model.Materials.Count; i++)
             {
                 var jklMat = model.Materials[i];
                 string jmatName = Path.ChangeExtension(jklMat.Name, ".jmat");
                 
-                // Search for .jmat file
-                string jmatPath = FindFile(ctx.assetPath, jklMat.Name, jmatName);
-                
                 Material unityMat = null;
-                int w = 64, h = 64;
+                int w = 64, h = 64; // Default size
 
-                // Special Case: Material 0 is often Sky/Clip (Transparent)
-                // If using logic similar to Blender addon:
+                // 3a. Special Case: Mat 0 (Sky/Clip) - Transparent
                 if (i == 0)
                 {
-                    unityMat = new Material(GetDefaultShader());
-                    unityMat.name = jklMat.Name;
-                    // Make transparent
-                    unityMat.SetFloat("_Mode", 3); // Transparent
-                    unityMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-                    unityMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                    unityMat.SetInt("_ZWrite", 0);
-                    unityMat.DisableKeyword("_ALPHATEST_ON");
-                    unityMat.DisableKeyword("_ALPHABLEND_ON");
-                    unityMat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-                    unityMat.renderQueue = 3000;
-                    
-                    if (IsURP())
-                    {
-                         unityMat.SetFloat("_Surface", 1); // Transparent
-                         unityMat.SetFloat("_Blend", 0); // Alpha
-                         unityMat.SetColor("_BaseColor", new Color(1, 1, 1, 0.2f));
-                    }
-                    else
-                    {
-                        unityMat.color = new Color(1, 1, 1, 0.2f);
-                    }
-                }
-                else if (!string.IsNullOrEmpty(jmatPath))
-                {
-                    var matParser = new MatParser(palette);
-                    var textures = matParser.Parse(jmatPath);
-
-                    if (textures.Count > 0)
-                    {
-                        var texData = textures[0];
-                        w = texData.Width;
-                        h = texData.Height;
-                        
-                        var texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
-                        texture.name = texData.Name;
-                        texture.SetPixels32(texData.Pixels);
-                        texture.Apply();
-                        
-                        unityMat = new Material(GetDefaultShader());
-                        unityMat.name = texData.Name;
-                        
-                        // Fix for URP Texture Assignment
-                        if (IsURP())
-                        {
-                            unityMat.SetTexture("_BaseMap", texture);
-                            unityMat.color = Color.white; // Ensure tint is white
-                        }
-                        else
-                        {
-                            unityMat.mainTexture = texture;
-                        }
-                        
-                        // Handle Transparency (if flagged in MAT)
-                        if (texData.Transparent)
-                        {
-                            if (IsURP())
-                            {
-                                unityMat.SetFloat("_AlphaClip", 1);
-                                unityMat.SetFloat("_Cutoff", 0.5f);
-                            }
-                            else
-                            {
-                                unityMat.SetFloat("_Mode", 1); // Cutout
-                                unityMat.EnableKeyword("_ALPHATEST_ON");
-                                unityMat.renderQueue = 2450;
-                            }
-                        }
-                    }
+                    unityMat = CreateTransparentMaterial(jklMat.Name, defaultShader, isURP);
+                    Debug.Log($"[JKLImporter] Mat 0 (Sky/Clip): {unityMat.name}");
                 }
                 else
                 {
-                    Debug.LogWarning($"[JKLImporter] Could not find .jmat file for material: {jklMat.Name} -> {jmatName}");
+                    // 3b. Find .jmat file
+                    string jmatPath = FindFile(ctx.assetPath, jklMat.Name, jmatName);
+                    
+                    if (!string.IsNullOrEmpty(jmatPath))
+                    {
+                        // Parse JMAT
+                        var matParser = new MatParser(palette);
+                        List<MatParser.MatTexture> textures = null;
+                        try { textures = matParser.Parse(jmatPath); }
+                        catch (System.Exception e) { Debug.LogError($"[JKLImporter] Failed to parse {jmatName}: {e}"); }
+
+                        if (textures != null && textures.Count > 0)
+                        {
+                            var texData = textures[0]; // Use first texture (mipmap 0 usually)
+                            w = texData.Width;
+                            h = texData.Height;
+                            
+                            // Create Texture
+                            var texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
+                            texture.name = texData.Name;
+                            texture.filterMode = FilterMode.Point; // Retro feel
+                            texture.SetPixels32(texData.Pixels);
+                            texture.Apply();
+
+                            // Create Material
+                            unityMat = new Material(defaultShader);
+                            unityMat.name = texData.Name;
+                            
+                            // Assign Texture (Pipeline Dependent)
+                            if (isURP)
+                            {
+                                unityMat.SetTexture("_BaseMap", texture);
+                                unityMat.SetColor("_BaseColor", Color.white);
+                            }
+                            else
+                            {
+                                unityMat.mainTexture = texture;
+                                unityMat.color = Color.white;
+                            }
+
+                            // Transparency
+                            if (texData.Transparent)
+                            {
+                                SetupCutoutMaterial(unityMat, isURP);
+                            }
+                        }
+                    }
+                    else
+                    {
+                         Debug.LogWarning($"[JKLImporter] Missing JMAT: {jklMat.Name} (looked for {jmatName})");
+                    }
                 }
 
+                // Fallback
                 if (unityMat == null)
                 {
-                    unityMat = new Material(GetDefaultShader());
-                    unityMat.name = jklMat.Name + "_Missing";
-                    if (IsURP()) unityMat.SetColor("_BaseColor", Color.magenta);
+                    unityMat = new Material(defaultShader);
+                    unityMat.name = $"{jklMat.Name}_MISSING";
+                    if (isURP) unityMat.SetColor("_BaseColor", Color.magenta);
                     else unityMat.color = Color.magenta;
                 }
-                
+
                 ctx.AddObjectToAsset($"mat_{i}", unityMat);
                 loadedMats[i] = (unityMat, w, h);
             }
 
-            // Create Mesh
+            // 4. Build Mesh
+            // Groups surfaces by material to create submeshes
+            // Re-indexes vertices to ensure UVs are unique per vertex
+            
             var mesh = new Mesh();
             mesh.name = model.Name;
-            
-            // Vertices are already shared, but Surface vertices are indices into them.
-            // Unity Mesh structure requires: Vertices, Normals, UVs.
-            // But JKL surfaces share geometric vertices but have Unique UVs per face-vertex.
-            // So we CANNOT simply set mesh.vertices = model.Vertices.
-            // We must UNROLL the mesh so that every triangle vertex has its own UV.
 
-            List<Vector3> newVertices = new List<Vector3>();
-            List<Vector2> newUVs = new List<Vector2>();
+            var newVertices = new List<Vector3>();
+            var newUVs = new List<Vector2>();
             
-            // Submeshes for Materials
-            // We need to group triangles by material.
-            // Map: MaterialIndex -> List of Indices
-            
-            // 1. Group Surfaces by MaterialIndex
-            var usedMatIndices = new HashSet<int>();
-            foreach (var s in model.Surfaces) usedMatIndices.Add(s.MaterialIndex);
-            
-            List<int> sortedMatIndices = new List<int>(usedMatIndices);
-            sortedMatIndices.Sort();
-
-            List<Material> rendererMaterials = new List<Material>();
-            
-            // Store triangles for later assignment
-            var submeshTriangles = new List<List<int>>();
-
-            for (int subMeshIdx = 0; subMeshIdx < sortedMatIndices.Count; subMeshIdx++)
+            // Group surfaces by material index
+            var surfacesByMat = new Dictionary<int, List<Droidworks.JKL.JKLSurface>>();
+            foreach(var s in model.Surfaces)
             {
-                int matIdx = sortedMatIndices[subMeshIdx];
-                var triIndices = new List<int>();
-                submeshTriangles.Add(triIndices);
-                
-                // Get corresponding Unity Material
-                if (loadedMats.ContainsKey(matIdx))
-                    rendererMaterials.Add(loadedMats[matIdx].Item1);
-                else
-                    rendererMaterials.Add(null); 
-
-                // Get Texture Dimensions for UV Normalization
-                int texW = 64, texH = 64;
-                if (loadedMats.ContainsKey(matIdx))
-                {
-                    texW = loadedMats[matIdx].Item2;
-                    texH = loadedMats[matIdx].Item3;
-                }
-
-                // Process all surfaces with this material
-                foreach (var surf in model.Surfaces)
-                {
-                    if (surf.MaterialIndex != matIdx) continue;
-                    if (surf.VertexIndices.Count < 3) continue;
-
-                    // Fan Triangulation (0, i, i+1)
-                    int v0_idx = surf.VertexIndices[0];
-                    int uv0_idx = surf.TextureVertexIndices[0];
-                    
-                    int idx0 = AddVertex(v0_idx, uv0_idx, model, newVertices, newUVs, texW, texH);
-
-                    for (int i = 1; i < surf.VertexIndices.Count - 1; i++)
-                    {
-                        int v1_idx = surf.VertexIndices[i];
-                        int uv1_idx = surf.TextureVertexIndices[i];
-                        int idx1 = AddVertex(v1_idx, uv1_idx, model, newVertices, newUVs, texW, texH);
-                        
-                        int v2_idx = surf.VertexIndices[i + 1];
-                        int uv2_idx = surf.TextureVertexIndices[i + 1];
-                        int idx2 = AddVertex(v2_idx, uv2_idx, model, newVertices, newUVs, texW, texH);
-                        
-                        triIndices.Add(idx0);
-                        triIndices.Add(idx1);
-                        triIndices.Add(idx2);
-                    }
-                }
+                if(!surfacesByMat.ContainsKey(s.MaterialIndex)) surfacesByMat[s.MaterialIndex] = new List<Droidworks.JKL.JKLSurface>();
+                surfacesByMat[s.MaterialIndex].Add(s);
             }
 
-            // Assign to Mesh
-            // CRITICAL: Set Vertices BEFORE SetTriangles
+            var sortedMatIndices = surfacesByMat.Keys.ToList();
+            sortedMatIndices.Sort();
+
+            mesh.subMeshCount = sortedMatIndices.Count;
+            var materialsForRenderer = new List<Material>();
+
+            // Temporary lists for mesh construction
+            // We can't set mesh.triangles until we set mesh.vertices!
+            var finalTriangles = new List<List<int>>(); 
+
+            for(int sub = 0; sub < sortedMatIndices.Count; sub++)
+            {
+                int matIdx = sortedMatIndices[sub];
+                var surfaces = surfacesByMat[matIdx];
+                
+                // Mat info
+                var matInfo = loadedMats.ContainsKey(matIdx) ? loadedMats[matIdx] : (null, 64, 64);
+                materialsForRenderer.Add(matInfo.mat);
+                int tw = matInfo.w;
+                int th = matInfo.h;
+
+                var subTriangles = new List<int>();
+
+                foreach(var surf in surfaces)
+                {
+                    // Triangulate Fan (0, 1, 2), (0, 2, 3)...
+                    if (surf.VertexIndices.Count < 3) continue;
+
+                    // Get/Add Base Vertex 0
+                    int idx0 = AddVertex(surf.VertexIndices[0], surf.TextureVertexIndices[0], model, newVertices, newUVs, tw, th);
+
+                    for(int k=1; k < surf.VertexIndices.Count - 1; k++)
+                    {
+                        int idx1 = AddVertex(surf.VertexIndices[k], surf.TextureVertexIndices[k], model, newVertices, newUVs, tw, th);
+                        int idx2 = AddVertex(surf.VertexIndices[k+1], surf.TextureVertexIndices[k+1], model, newVertices, newUVs, tw, th);
+
+                        subTriangles.Add(idx0);
+                        subTriangles.Add(idx1);
+                        subTriangles.Add(idx2);
+                    }
+                }
+                finalTriangles.Add(subTriangles);
+            }
+
+            // Assign Geometry (Strict Order for Unity)
             mesh.SetVertices(newVertices);
             mesh.SetUVs(0, newUVs);
             
-            mesh.subMeshCount = sortedMatIndices.Count;
-            for (int i = 0; i < submeshTriangles.Count; i++)
+            for(int i=0; i<finalTriangles.Count; i++)
             {
-               mesh.SetTriangles(submeshTriangles[i], i);
+                mesh.SetTriangles(finalTriangles[i], i);
             }
 
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
-
+            
             ctx.AddObjectToAsset("mesh", mesh);
 
-            // Create GameObject
-            var go = new GameObject(model.Name);
+            // 5. Create GameObject
+            var go = new GameObject(Path.GetFileNameWithoutExtension(ctx.assetPath));
             var mf = go.AddComponent<MeshFilter>();
             mf.sharedMesh = mesh;
-            
             var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterials = rendererMaterials.ToArray();
+            mr.sharedMaterials = materialsForRenderer.ToArray();
 
             ctx.AddObjectToAsset("main", go);
             ctx.SetMainObject(go);
+            
+            Debug.Log("[JKLImporter] Import Complete.");
+        }
+
+        // --- Helper Methods ---
+
+        private int AddVertex(int vIdx, int uvIdx, JKLModel model, List<Vector3> verts, List<Vector2> uvs, int w, int h)
+        {
+            // Position
+            verts.Add(model.Vertices[vIdx]);
+
+            // UV
+            if (uvIdx >= 0 && uvIdx < model.TextureVertices.Count)
+            {
+                Vector2 raw = model.TextureVertices[uvIdx];
+                // Normalization: raw / dimension
+                uvs.Add(new Vector2(raw.x / w, raw.y / h));
+            }
+            else
+            {
+                uvs.Add(Vector2.zero);
+            }
+
+            return verts.Count - 1;
+        }
+
+        private CmpPalette FindAndLoadPalette(string assetPath)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(assetPath);
+                
+                // Strategy: Search up parents, looking for "mission.cmp" in standard locations
+                // or any ".cmp" if close by.
+                
+                // 1. Recursive search for "mission.cmp" starting from closest "mission" parent
+                string searchDir = dir;
+                while(!string.IsNullOrEmpty(searchDir))
+                {
+                    // Check local "cmp" folder
+                    string localCmpDir = Path.Combine(searchDir, "cmp");
+                    if (Directory.Exists(localCmpDir))
+                    {
+                         var cmps = Directory.GetFiles(localCmpDir, "*.cmp");
+                         if(cmps.Length > 0) return CmpParser.Parse(cmps[0]);
+                    }
+
+                    // Check for "mission.cmp" recursively if inside a folder named "mission" (common in JK extraction)
+                    if (Path.GetFileName(searchDir).Equals("mission", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                         var found = Directory.GetFiles(searchDir, "mission.cmp", SearchOption.AllDirectories);
+                         if (found.Length > 0) return CmpParser.Parse(found[0]);
+                    }
+                    
+                    searchDir = Path.GetDirectoryName(searchDir);
+                    if (searchDir.Contains("Assets") == false) break; // Don't go outside Assets
+                }
+                
+                // 2. Fallback: Check local dir
+                var localFiles = Directory.GetFiles(dir, "*.cmp");
+                if (localFiles.Length > 0) return CmpParser.Parse(localFiles[0]);
+
+            }
+            catch(System.Exception e)
+            {
+                Debug.LogError($"[JKLImporter] Palette Search Error: {e}");
+            }
+            return null;
+        }
+
+        private string FindFile(string assetPath, string jklName, string jmatName)
+        {
+            string baseDir = Path.GetDirectoryName(assetPath);
+            string parentDir = Path.GetDirectoryName(baseDir);
+
+            // Paths from Blender Addon (ImportSithJKL.py)
+            // base_dir
+            // base_dir/mat
+            // base_dir/3do/mat
+            // parent/mat
+            // parent/3do/mat
+            
+            var paths = new List<string>();
+            paths.Add(baseDir);
+            paths.Add(Path.Combine(baseDir, "mat"));
+            paths.Add(Path.Combine(baseDir, "3do", "mat"));
+            
+            if(!string.IsNullOrEmpty(parentDir))
+            {
+                paths.Add(Path.Combine(parentDir, "mat"));
+                paths.Add(Path.Combine(parentDir, "3do", "mat"));
+            }
+
+            // Allow loose checking
+            foreach(var p in paths)
+            {
+                if (!Directory.Exists(p)) continue;
+                
+                // Check for jmatName (likely lowercase via Path.ChangeExtension) and jklName (original)
+                var files = Directory.GetFiles(p);
+                foreach(var f in files)
+                {
+                    string fname = Path.GetFileName(f);
+                    if (fname.Equals(jmatName, System.StringComparison.OrdinalIgnoreCase) ||
+                        fname.Equals(jklName, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Debug.Log($"[JKLImporter] Found {jmatName} at {f}");
+                        return f;
+                    }
+                }
+            }
+             
+            // Debug.LogWarning($"[JKLImporter] Not Found: {jmatName}. Searched: {string.Join(", ", paths)}");
+            return null;
+        }
+
+        // --- Shader Helpers ---
+
+        private Material CreateTransparentMaterial(string name, Shader shader, bool isURP)
+        {
+            var mat = new Material(shader);
+            mat.name = name;
+            
+            if (isURP)
+            {
+                mat.SetFloat("_Surface", 1); // Transparent
+                mat.SetFloat("_Blend", 0); // Alpha
+                mat.SetColor("_BaseColor", new Color(1, 1, 1, 0.2f));
+            }
+            else
+            {
+                mat.SetFloat("_Mode", 3); // Transparent
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetInt("_ZWrite", 0);
+                mat.DisableKeyword("_ALPHATEST_ON");
+                mat.DisableKeyword("_ALPHABLEND_ON");
+                mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = 3000;
+                mat.color = new Color(1,1,1, 0.2f);
+            }
+            return mat;
+        }
+
+        private void SetupCutoutMaterial(Material mat, bool isURP)
+        {
+            if (isURP)
+            {
+                mat.SetFloat("_AlphaClip", 1);
+                mat.SetFloat("_Cutoff", 0.5f);
+            }
+            else
+            {
+                mat.SetFloat("_Mode", 1); // Cutout
+                mat.EnableKeyword("_ALPHATEST_ON");
+                mat.renderQueue = 2450;
+            }
         }
 
         private Shader GetDefaultShader()
         {
-            if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
+             if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
             {
                 var pipe = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name;
                 if (pipe.Contains("Universal")) return Shader.Find("Universal Render Pipeline/Lit");
@@ -254,135 +380,10 @@ namespace Droidworks.JKL.Editor
         private bool IsURP()
         {
              if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
-            {
-                var pipe = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name;
-                return pipe.Contains("Universal");
-            }
-            return false;
-        }
-
-        private int AddVertex(int vIdx, int uvIdx, JKLModel model, List<Vector3> verts, List<Vector2> uvs, int w, int h)
-        {
-            // Simple Add. Optimization: Use Dictionary cache to reuse vertices.
-            // For now, simple duplicate is fine for level geometry.
-            
-            verts.Add(model.Vertices[vIdx]);
-            
-            if (uvIdx >= 0 && uvIdx < model.TextureVertices.Count)
-            {
-                Vector2 pixUV = model.TextureVertices[uvIdx];
-                // Normalize: u = pix/w, v = pix/h
-                // JKL V is top-down? Unity Bottom-Up.
-                // Assuming we flipped texture pixels Y, we might need to flip V?
-                // Or if JKL UV (0,0) is top-left, and Unity (0,0) is bottom-left.
-                // Image decoded with Flip Y -> (0,0) Unity is Top-Left of original Image.
-                // So (0,0) JKL UV matches (0,0) Unity UV.
-                // It should be fine.
-                
-                uvs.Add(new Vector2(pixUV.x / w, pixUV.y / h));
-            }
-            else
-            {
-                uvs.Add(Vector2.zero);
-            }
-            
-            return verts.Count - 1;
-        }
-
-        private CmpPalette FindAndLoadPalette(string assetPath)
-        {
-            // 1. Try standard relative lookups first (fast)
-            string dir = Path.GetDirectoryName(assetPath);
-            for (int i=0; i<4; i++)
-            {
-                if (string.IsNullOrEmpty(dir)) break;
-                
-                string[] cmps = Directory.GetFiles(dir, "*.cmp");
-                if (cmps.Length > 0) return CmpParser.Parse(cmps[0]);
-                
-                if (Directory.Exists(Path.Combine(dir, "cmp")))
-                {
-                     cmps = Directory.GetFiles(Path.Combine(dir, "cmp"), "*.cmp");
-                     if (cmps.Length > 0) return CmpParser.Parse(cmps[0]);
-                }
-                dir = Path.GetDirectoryName(dir);
-            }
-
-            // 2. Fallback: Recursive search for "mission.cmp" in the project found in "mission" folder
-            // This covers the user's case: mission/3do/misc/cmp/mission.cmp
-            // We'll search starting from the JKL's root parent (assuming "mission" is in path)
-            // or just search up to Assets.
-            
-            dir = Path.GetDirectoryName(assetPath);
-            while (!string.IsNullOrEmpty(dir))
-            {
-                // If we are in "mission" folder or equivalent, deep search
-                if (Path.GetFileName(dir).Equals("mission", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    var found = Directory.GetFiles(dir, "mission.cmp", SearchOption.AllDirectories);
-                    if (found.Length > 0) return CmpParser.Parse(found[0]);
-                }
-                
-                // Also just check strict "mission.cmp" recursively if we are at Assets root?
-                // Too slow. Let's rely on the above loop eventually checking "mission" folder if JKL is inside it.
-                
-                dir = Path.GetDirectoryName(dir);
-                 // Stop if we leave Assets
-                 if (dir.EndsWith("Assets")) break;
-            }
-            
-            return null;
-        }
-        
-        private string FindFile(string assetPath, string originalName, string targetName)
-        {
-            // Search relative to assetPath
-            string dir = Path.GetDirectoryName(assetPath);
-            
-            // Candidate paths to check
-            var candidates = new List<string>();
-            candidates.Add(dir);
-            candidates.Add(Path.Combine(dir, "mat"));
-            candidates.Add(Path.Combine(dir, "3do", "mat")); // Added this line
-            
-            // Parent check (for ../mat)
-            string parent = Path.GetDirectoryName(dir);
-            if (!string.IsNullOrEmpty(parent))
-            {
-                candidates.Add(Path.Combine(parent, "mat"));
-                candidates.Add(Path.Combine(parent, "3do", "mat"));
-            }
-
-            foreach (var path in candidates)
-            {
-                if (!Directory.Exists(path)) 
-                {
-                    // Debug.Log($"[JKLImporter] Candidate path does not exist: {path}");
-                    continue;
-                }
-
-                // Case-Insensitive Search
-                // targetName is e.g. "00t_wall.jmat"
-                // file might be "00t_wall.jmat" or "00T_WALL.jmat"
-                
-                var files = Directory.GetFiles(path); // This might be slow if folder is huge
-                foreach (var f in files)
-                {
-                    string fname = Path.GetFileName(f);
-                    if (fname.Equals(targetName, System.StringComparison.OrdinalIgnoreCase))
-                        return f;
-                        
-                    // Also verify against original name just in case rename didn't happen
-                    // e.g. 00T_WALL.MAT (if we didn't rename it?)
-                    if (fname.Equals(originalName, System.StringComparison.OrdinalIgnoreCase))
-                        return f;
-                }
-            }
-            
-            // Debug failure
-            Debug.LogWarning($"[JKLImporter] FindFile Failed for {targetName}. Checked: {string.Join(", ", candidates)}");
-             
-             return null;
+             {
+                 return UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name.Contains("Universal");
+             }
+             return false;
         }
     }
 }
