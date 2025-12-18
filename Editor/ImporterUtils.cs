@@ -191,5 +191,42 @@ namespace Droidworks.JKL.Editor
              }
              return false;
         }
+
+        // --- Coordinate Conversion ---
+
+        /// <summary>
+        /// Converts a Sith Engine position (Right-Handed, Z-up) to Unity (Left-Handed, Y-up).
+        /// Swap Y and Z axes.
+        /// </summary>
+        public static Vector3 SithToUnityPosition(Vector3 sithPos)
+        {
+            return new Vector3(sithPos.x, sithPos.z, sithPos.y);
+        }
+
+        /// <summary>
+        /// Converts a Sith Engine rotation (Pitch/Yaw/Roll in Z-up) to Unity Quaternion.
+        /// </summary>
+        /// <param name="sithRot">Vector3 containing (Pitch, Yaw, Roll) in degrees</param>
+        public static Quaternion SithToUnityRotation(Vector3 sithRot)
+        {
+            // Sith (Right Handed Z-up):
+            // Pitch (X), Yaw (Z), Roll (Y) 
+            // Blender Importer logic: RotZ(yaw) * RotX(pitch) * RotY(roll)
+
+            // Unity (Left Handed Y-up):
+            // Map Axes: 3DO-X -> Unity-X, 3DO-Z -> Unity-Y, 3DO-Y -> Unity-Z
+            // Negate angles to account for coordinate system chirality change
+
+            float rX = -sithRot.x; // Pitch
+            float rY = -sithRot.y; // Yaw
+            float rZ = -sithRot.z; // Roll
+            
+            // Construct Rotation: Yaw(Y) * Pitch(X) * Roll(Z)
+            Quaternion qPitch = Quaternion.AngleAxis(rX, Vector3.right);
+            Quaternion qYaw = Quaternion.AngleAxis(rY, Vector3.up);
+            Quaternion qRoll = Quaternion.AngleAxis(rZ, Vector3.forward);
+            
+            return qYaw * qPitch * qRoll;
+        }
     }
 }

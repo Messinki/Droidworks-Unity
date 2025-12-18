@@ -93,8 +93,9 @@ namespace Droidworks.JKL
                 float y = GetFloat();
                 float z = GetFloat();
                 
-                // Unity (x, z, y) swap for Y-up
-                model.Vertices.Add(new Vector3(x, z, y)); 
+                // RAW Sith Coordinates (Right-Handed Z-up)
+                // We will convert to Unity space in the Importer
+                model.Vertices.Add(new Vector3(x, y, z)); 
             }
         }
 

@@ -120,26 +120,9 @@ namespace Droidworks.ThreeDO.Editor
                 var go = nodeGOs[i];
                 
                 // Position (Swap Y/Z)
-                go.transform.localPosition = new Vector3(node.Position.x, node.Position.z, node.Position.y);
+                go.transform.localPosition = ImporterUtils.SithToUnityPosition(node.Position);
                 // Rotation
-                // 3DO (Right Handed Z-up):
-                // Pitch (X), Yaw (Z), Roll (Y) - Based on Assasin.3do and Blender Importer structure
-                // Blender applies: RotZ(yaw) * RotX(pitch) * RotY(roll)
-                
-                // Unity (Left Handed Y-up):
-                // Map Axes: 3DO-X -> Unity-X, 3DO-Z -> Unity-Y, 3DO-Y -> Unity-Z
-                // Negate angles for coordinate system change
-                
-                float rX = -node.Rotation.x; // Pitch
-                float rY = -node.Rotation.y; // Yaw
-                float rZ = -node.Rotation.z; // Roll
-                
-                // Construct Rotation: Yaw(Y) * Pitch(X) * Roll(Z)
-                Quaternion qPitch = Quaternion.AngleAxis(rX, Vector3.right);
-                Quaternion qYaw = Quaternion.AngleAxis(rY, Vector3.up);
-                Quaternion qRoll = Quaternion.AngleAxis(rZ, Vector3.forward);
-                
-                go.transform.localRotation = qYaw * qPitch * qRoll;
+                go.transform.localRotation = ImporterUtils.SithToUnityRotation(node.Rotation);
 
                 // Hierarchy
                 if (node.ParentIndex >= 0 && node.ParentIndex < nodeGOs.Length && node.ParentIndex != i)
@@ -157,7 +140,7 @@ namespace Droidworks.ThreeDO.Editor
                     var meshDef = model.Meshes[node.MeshIndex];
                     
                     // PASS PIVOT to Mesh Builder
-                    Vector3 pivotUnity = new Vector3(node.Pivot.x, node.Pivot.z, node.Pivot.y);
+                    Vector3 pivotUnity = ImporterUtils.SithToUnityPosition(node.Pivot);
                     
                     var (unityMesh, unityMats) = BuildUnityMesh(meshDef, mats, pivotUnity);
                     unityMesh.name = $"{meshDef.Name}_{i}"; 
@@ -198,7 +181,7 @@ namespace Droidworks.ThreeDO.Editor
                     int uvIdx = (k < face.UVIndices.Count) ? face.UVIndices[k] : 0;
                     
                     Vector3 vRaw = meshDef.Vertices[vIdx];
-                    Vector3 v = new Vector3(vRaw.x, vRaw.z, vRaw.y);
+                    Vector3 v = ImporterUtils.SithToUnityPosition(vRaw);
                     
                     // APPLY PIVOT OFFSET
                     v += pivotOffset; 

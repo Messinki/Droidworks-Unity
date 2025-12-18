@@ -243,8 +243,8 @@ namespace Droidworks.JKL.Editor
 
         private int AddVertex(int vIdx, int uvIdx, JKLModel model, List<Vector3> verts, List<Vector2> uvs, int w, int h)
         {
-            // Position
-            verts.Add(model.Vertices[vIdx]);
+            // Position (Convert from Sith Z-up to Unity Y-up)
+            verts.Add(ImporterUtils.SithToUnityPosition(model.Vertices[vIdx]));
 
             // UV
             if (uvIdx >= 0 && uvIdx < model.TextureVertices.Count)
