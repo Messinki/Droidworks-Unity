@@ -53,6 +53,12 @@ namespace Droidworks.JKL.Editor
                 {
                     unityMat = CreateTransparentMaterial(jklMat.Name, defaultShader, isURP);
                     Debug.Log($"[JKLImporter] Mat 0 (Sky/Clip): {unityMat.name}");
+                    
+                    // Save the dummy texture we assigned to Mat 0
+                    if (unityMat.mainTexture != null)
+                    {
+                         ctx.AddObjectToAsset($"tex_0", unityMat.mainTexture);
+                    }
                 }
                 else
                 {
@@ -345,11 +351,29 @@ namespace Droidworks.JKL.Editor
             var mat = new Material(shader);
             mat.name = name;
             
+            // Generate 1x1 Transparent Texture to ensure shader is happy
+            var tex = new Texture2D(1, 1);
+            tex.SetPixel(0, 0, new Color(1, 1, 1, 0)); // Fully Transparent
+            tex.Apply();
+            tex.name = name + "_TransTex";
+            
+            // We can't easier add to asset context from here without passing ctx.
+            // For now, let's just create it. Ideally it should be added to ctx in the main loop.
+            // But since this helper is called from main loop, we can just return mat and let main loop handle texture? 
+            // No, main loop expects mat. 
+            // Let's rely on standard shader properties.
+            
             if (isURP)
             {
                 mat.SetFloat("_Surface", 1); // Transparent
                 mat.SetFloat("_Blend", 0); // Alpha
-                mat.SetColor("_BaseColor", new Color(1, 1, 1, 0.2f));
+                mat.SetColor("_BaseColor", new Color(1, 1, 1, 0.0f)); // 0 Alpha
+                mat.SetTexture("_BaseMap", tex);
+                mat.SetTexture("_MainTex", tex);
+                
+                mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+                mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = 3000;
             }
             else
             {
@@ -361,7 +385,8 @@ namespace Droidworks.JKL.Editor
                 mat.DisableKeyword("_ALPHABLEND_ON");
                 mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
                 mat.renderQueue = 3000;
-                mat.color = new Color(1,1,1, 0.2f);
+                mat.color = new Color(1,1,1, 0.0f);
+                mat.mainTexture = tex;
             }
             return mat;
         }
