@@ -8,9 +8,7 @@ namespace Droidworks.JKL
 {
     public class JKLParser
     {
-        private string _content;
-        private int _cursor;
-        private int _length;
+        private JKLTokenizer _tokenizer;
 
         public JKLModel Parse(string filePath)
         {
@@ -19,27 +17,25 @@ namespace Droidworks.JKL
                 throw new FileNotFoundException($"JKL file not found: {filePath}");
             }
 
-            _content = File.ReadAllText(filePath);
-            _length = _content.Length;
-            _cursor = 0;
+            _tokenizer = new JKLTokenizer(filePath);
 
             var model = new JKLModel();
             model.Name = Path.GetFileNameWithoutExtension(filePath);
 
             while (true)
             {
-                string token = GetToken();
+                string token = _tokenizer.GetToken();
                 if (string.IsNullOrEmpty(token)) break;
 
                 // Section detection
                 // JKL has "SECTION: ..."
                 if (token.Equals("SECTION", StringComparison.OrdinalIgnoreCase))
                 {
-                    string t2 = GetToken(); // Could be ':' or the section name
+                    string t2 = _tokenizer.GetToken(); // Could be ':' or the section name
                     string sectionName = "";
                     if (t2 == ":")
                     {
-                        sectionName = GetToken();
+                        sectionName = _tokenizer.GetToken();
                     }
                     else
                     {
@@ -54,14 +50,14 @@ namespace Droidworks.JKL
                 // e.g. "World vertices 123"
                 if (token.Equals("World", StringComparison.OrdinalIgnoreCase))
                 {
-                    string sub = GetToken();
+                    string sub = _tokenizer.GetToken();
                     if (sub.Equals("vertices", StringComparison.OrdinalIgnoreCase))
                     {
                         ParseVertices(model);
                     }
                     else if (sub.Equals("texture", StringComparison.OrdinalIgnoreCase))
                     {
-                        string sub2 = GetToken();
+                        string sub2 = _tokenizer.GetToken();
                         if (sub2.Equals("vertices", StringComparison.OrdinalIgnoreCase))
                         {
                             ParseTextureVertices(model);
@@ -83,15 +79,15 @@ namespace Droidworks.JKL
 
         private void ParseVertices(JKLModel model)
         {
-            int count = GetInt();
+            int count = _tokenizer.GetInt();
             for (int i = 0; i < count; i++)
             {
-                string idxToken = GetToken();
-                if (!idxToken.EndsWith(":")) PeekTokenAndConsume(":");
+                _tokenizer.GetInt(); // index
+                // Tokenizer handles ':' separator automatically if present
 
-                float x = GetFloat();
-                float y = GetFloat();
-                float z = GetFloat();
+                float x = _tokenizer.GetFloat();
+                float y = _tokenizer.GetFloat();
+                float z = _tokenizer.GetFloat();
                 
                 // RAW Sith Coordinates (Right-Handed Z-up)
                 // We will convert to Unity space in the Importer
@@ -101,14 +97,13 @@ namespace Droidworks.JKL
 
         private void ParseTextureVertices(JKLModel model)
         {
-            int count = GetInt();
+            int count = _tokenizer.GetInt();
             for (int i = 0; i < count; i++)
             {
-                string idxToken = GetToken();
-                if (!idxToken.EndsWith(":")) PeekTokenAndConsume(":");
+                _tokenizer.GetInt(); // index
 
-                float u = GetFloat();
-                float v = GetFloat();
+                float u = _tokenizer.GetFloat();
+                float v = _tokenizer.GetFloat();
                 
                 model.TextureVertices.Add(new Vector2(u, v));
             }
@@ -116,19 +111,29 @@ namespace Droidworks.JKL
 
         private void ParseMaterials(JKLModel model)
         {
-            int count = GetInt();
+            int count = _tokenizer.GetInt();
             for (int i = 0; i < count; i++)
             {
-                // Index check
-                string token = GetToken();
-                if (token.Equals("end", StringComparison.OrdinalIgnoreCase)) break;
+                // Peek to see if we hit "end" (rare but possible in some formats)
+                string token = _tokenizer.PeekToken();
+                if (token != null && token.Equals("end", StringComparison.OrdinalIgnoreCase)) 
+                {
+                    _tokenizer.GetToken(); // consume 'end'
+                    break;
+                }
 
-                // Handle index 0:
-                if (!token.EndsWith(":")) PeekTokenAndConsume(":");
+                _tokenizer.GetInt(); // 0
                 
-                string file = GetToken();
-                float xTile = GetFloat();
-                float yTile = GetFloat();
+                // CONSUME COLON IF PRESENT
+                string next = _tokenizer.PeekToken();
+                if (next == ":")
+                {
+                    _tokenizer.GetToken(); 
+                }
+                
+                string file = _tokenizer.GetToken();
+                float xTile = _tokenizer.GetFloat();
+                float yTile = _tokenizer.GetFloat();
 
                 model.Materials.Add(new JKLMaterial 
                 { 
@@ -141,19 +146,18 @@ namespace Droidworks.JKL
 
         private void ParseSurfaces(JKLModel model)
         {
-            int count = GetInt(); // 0: mat ...
+            int count = _tokenizer.GetInt(); // 0: mat ...
 
             for (int i = 0; i < count; i++)
             {
-                string idxToken = GetToken();
-                if (!idxToken.EndsWith(":")) PeekTokenAndConsume(":");
+                _tokenizer.GetInt(); // index
 
-                int matIdx = GetInt(); 
+                int matIdx = _tokenizer.GetInt(); 
 
                 // Skip 7 fields
-                for (int k = 0; k < 7; k++) GetToken();
+                for (int k = 0; k < 7; k++) _tokenizer.GetToken();
 
-                int nMsgVerts = GetInt(); 
+                int nMsgVerts = _tokenizer.GetInt(); 
 
                 var surface = new JKLSurface();
                 surface.MaterialIndex = matIdx;
@@ -161,88 +165,29 @@ namespace Droidworks.JKL
                 for (int k = 0; k < nMsgVerts; k++)
                 {
                     // v,tv 
-                    string pair = GetToken();
-                    string[] parts = pair.Split(',');
+                    // Tokenizer will split "0,1" into "0", ",", "1"
                     
-                    int vIdx = int.Parse(parts[0]);
-                    int tvIdx = (parts.Length > 1) ? int.Parse(parts[1]) : 0;
-
+                    int vIdx = _tokenizer.GetInt();
+                    
+                    // Check for comma
+                    string next = _tokenizer.PeekToken();
+                    int tvIdx = 0;
+                    
+                    if (next == ",")
+                    {
+                        _tokenizer.GetToken(); // consume comma
+                        tvIdx = _tokenizer.GetInt();
+                    }
+                    
                     surface.VertexIndices.Add(vIdx);
                     surface.TextureVertexIndices.Add(tvIdx);
                 }
                 
                 // Skip Intensities 
-                for (int k = 0; k < nMsgVerts; k++) GetFloat();
+                for (int k = 0; k < nMsgVerts; k++) _tokenizer.GetFloat();
 
                 model.Surfaces.Add(surface);
             }
-        }
-
-        // --- Tokenizer Helpers ---
-
-        private string GetToken()
-        {
-            SkipWhitespace();
-            if (_cursor >= _length) return null;
-
-            int start = _cursor;
-            while (_cursor < _length && !char.IsWhiteSpace(_content[_cursor]))
-            {
-                _cursor++;
-            }
-            return _content.Substring(start, _cursor - start);
-        }
-
-        private void SkipWhitespace()
-        {
-            while (_cursor < _length)
-            {
-                char c = _content[_cursor];
-                // Skip comments # ...
-                if (c == '#')
-                {
-                    while (_cursor < _length && _content[_cursor] != '\n') _cursor++;
-                }
-                else if (char.IsWhiteSpace(c))
-                {
-                    _cursor++;
-                }
-                else
-                {
-                    break;
-                }
-            }
-        }
-        
-        private void PeekTokenAndConsume(string expected)
-        {
-            // Simple hack: read next token, if matches consume, else backtrack?
-            // Actually JKL is rigid enough. 
-            // If we are at "0", next char might be ":"
-            // My GetToken splits at whitespace. So "0:" is one token? Yes.
-            // If "0 :", then "0", ":"
-            // Let's rely on ParseVertices handling "0:" or "0".
-            // Implement simple check:
-            int savedCursor = _cursor;
-            string t = GetToken();
-            if (t != expected)
-            {
-                _cursor = savedCursor; // Backtrack
-            }
-        }
-
-        private int GetInt()
-        {
-            string s = GetToken();
-            if (s != null && s.EndsWith(":")) s = s.Substring(0, s.Length - 1);
-            return int.Parse(s);
-        }
-
-        private float GetFloat()
-        {
-            string s = GetToken();
-            // Handle scientific notation etc if needed, but float.Parse usually fine
-            return float.Parse(s, CultureInfo.InvariantCulture);
         }
     }
 }
