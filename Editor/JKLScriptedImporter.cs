@@ -45,7 +45,7 @@ namespace Droidworks.JKL.Editor
                 // If using logic similar to Blender addon:
                 if (i == 0)
                 {
-                    unityMat = new Material(Shader.Find("Standard"));
+                    unityMat = new Material(GetDefaultShader());
                     unityMat.name = jklMat.Name;
                     // Make transparent
                     unityMat.SetFloat("_Mode", 3); // Transparent
@@ -56,7 +56,17 @@ namespace Droidworks.JKL.Editor
                     unityMat.DisableKeyword("_ALPHABLEND_ON");
                     unityMat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
                     unityMat.renderQueue = 3000;
-                    unityMat.color = new Color(1, 1, 1, 0.2f); // Faint visibility
+                    
+                    if (IsURP())
+                    {
+                         unityMat.SetFloat("_Surface", 1); // Transparent
+                         unityMat.SetFloat("_Blend", 0); // Alpha
+                         unityMat.SetColor("_BaseColor", new Color(1, 1, 1, 0.2f));
+                    }
+                    else
+                    {
+                        unityMat.color = new Color(1, 1, 1, 0.2f);
+                    }
                 }
                 else if (!string.IsNullOrEmpty(jmatPath))
                 {
@@ -74,25 +84,34 @@ namespace Droidworks.JKL.Editor
                         texture.SetPixels32(texData.Pixels);
                         texture.Apply();
                         
-                        unityMat = new Material(Shader.Find("Standard"));
+                        unityMat = new Material(GetDefaultShader());
                         unityMat.name = texData.Name;
                         unityMat.mainTexture = texture;
                         
                         // Handle Transparency (if flagged in MAT)
                         if (texData.Transparent)
                         {
-                            unityMat.SetFloat("_Mode", 1); // Cutout
-                            unityMat.EnableKeyword("_ALPHATEST_ON");
-                            unityMat.renderQueue = 2450;
+                            if (IsURP())
+                            {
+                                unityMat.SetFloat("_AlphaClip", 1);
+                                unityMat.SetFloat("_Cutoff", 0.5f);
+                            }
+                            else
+                            {
+                                unityMat.SetFloat("_Mode", 1); // Cutout
+                                unityMat.EnableKeyword("_ALPHATEST_ON");
+                                unityMat.renderQueue = 2450;
+                            }
                         }
                     }
                 }
 
                 if (unityMat == null)
                 {
-                    unityMat = new Material(Shader.Find("Standard"));
+                    unityMat = new Material(GetDefaultShader());
                     unityMat.name = jklMat.Name + "_Missing";
-                    unityMat.color = Color.magenta;
+                    if (IsURP()) unityMat.SetColor("_BaseColor", Color.magenta);
+                    else unityMat.color = Color.magenta;
                 }
                 
                 ctx.AddObjectToAsset($"mat_{i}", unityMat);
@@ -203,6 +222,27 @@ namespace Droidworks.JKL.Editor
 
             ctx.AddObjectToAsset("main", go);
             ctx.SetMainObject(go);
+        }
+
+        private Shader GetDefaultShader()
+        {
+            if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
+            {
+                var pipe = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name;
+                if (pipe.Contains("Universal")) return Shader.Find("Universal Render Pipeline/Lit");
+                if (pipe.Contains("HDRenderPipeline")) return Shader.Find("HDRP/Lit");
+            }
+            return Shader.Find("Standard");
+        }
+
+        private bool IsURP()
+        {
+             if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null)
+            {
+                var pipe = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name;
+                return pipe.Contains("Universal");
+            }
+            return false;
         }
 
         private int AddVertex(int vIdx, int uvIdx, JKLModel model, List<Vector3> verts, List<Vector2> uvs, int w, int h)
