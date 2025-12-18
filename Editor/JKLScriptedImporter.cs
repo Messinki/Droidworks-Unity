@@ -237,27 +237,46 @@ namespace Droidworks.JKL.Editor
 
         private CmpPalette FindAndLoadPalette(string assetPath)
         {
-            // Try explicit "mission.cmp" in various parent folders
+            // 1. Try standard relative lookups first (fast)
             string dir = Path.GetDirectoryName(assetPath);
-            // Search up 3 levels
             for (int i=0; i<4; i++)
             {
                 if (string.IsNullOrEmpty(dir)) break;
                 
-                // Check direct cmp
                 string[] cmps = Directory.GetFiles(dir, "*.cmp");
                 if (cmps.Length > 0) return CmpParser.Parse(cmps[0]);
                 
-                // Check "cmp" folder
                 if (Directory.Exists(Path.Combine(dir, "cmp")))
                 {
                      cmps = Directory.GetFiles(Path.Combine(dir, "cmp"), "*.cmp");
                      if (cmps.Length > 0) return CmpParser.Parse(cmps[0]);
                 }
-
-                // Parent
                 dir = Path.GetDirectoryName(dir);
             }
+
+            // 2. Fallback: Recursive search for "mission.cmp" in the project found in "mission" folder
+            // This covers the user's case: mission/3do/misc/cmp/mission.cmp
+            // We'll search starting from the JKL's root parent (assuming "mission" is in path)
+            // or just search up to Assets.
+            
+            dir = Path.GetDirectoryName(assetPath);
+            while (!string.IsNullOrEmpty(dir))
+            {
+                // If we are in "mission" folder or equivalent, deep search
+                if (Path.GetFileName(dir).Equals("mission", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var found = Directory.GetFiles(dir, "mission.cmp", SearchOption.AllDirectories);
+                    if (found.Length > 0) return CmpParser.Parse(found[0]);
+                }
+                
+                // Also just check strict "mission.cmp" recursively if we are at Assets root?
+                // Too slow. Let's rely on the above loop eventually checking "mission" folder if JKL is inside it.
+                
+                dir = Path.GetDirectoryName(dir);
+                 // Stop if we leave Assets
+                 if (dir.EndsWith("Assets")) break;
+            }
+            
             return null;
         }
         
@@ -266,28 +285,40 @@ namespace Droidworks.JKL.Editor
             // Search relative to assetPath
             string dir = Path.GetDirectoryName(assetPath);
             
-            // 1. Current Dir
-            string p = Path.Combine(dir, targetName);
-            if (File.Exists(p)) return p;
+            // Candidate paths to check
+            var candidates = new List<string>();
+            candidates.Add(dir);
+            candidates.Add(Path.Combine(dir, "mat"));
             
-            // 2. mat/ folder in current
-             p = Path.Combine(dir, "mat", targetName);
-            if (File.Exists(p)) return p;
-            
-            // 3. ../mat/
+            // Parent check (for ../mat)
             string parent = Path.GetDirectoryName(dir);
             if (!string.IsNullOrEmpty(parent))
             {
-                p = Path.Combine(parent, "mat", targetName);
-                if (File.Exists(p)) return p;
-                
-                 p = Path.Combine(parent, "3do", "mat", targetName);
-                if (File.Exists(p)) return p;
+                candidates.Add(Path.Combine(parent, "mat"));
+                candidates.Add(Path.Combine(parent, "3do", "mat"));
             }
-            
-            // Also check original extension if renaming didn't happen?
-             p = Path.Combine(dir, originalName);
-             if (File.Exists(p)) return p;
+
+            foreach (var path in candidates)
+            {
+                if (!Directory.Exists(path)) continue;
+
+                // Case-Insensitive Search
+                // targetName is e.g. "00t_wall.jmat"
+                // file might be "00t_wall.jmat" or "00T_WALL.jmat"
+                
+                var files = Directory.GetFiles(path);
+                foreach (var f in files)
+                {
+                    string fname = Path.GetFileName(f);
+                    if (fname.Equals(targetName, System.StringComparison.OrdinalIgnoreCase))
+                        return f;
+                        
+                    // Also verify against original name just in case rename didn't happen
+                    // e.g. 00T_WALL.MAT (if we didn't rename it?)
+                    if (fname.Equals(originalName, System.StringComparison.OrdinalIgnoreCase))
+                        return f;
+                }
+            }
              
              return null;
         }
