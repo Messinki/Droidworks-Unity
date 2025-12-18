@@ -4,7 +4,7 @@ using System.IO;
 using System.Collections.Generic;
 using Droidworks.ThreeDO;
 using Droidworks.JKL; 
-using Droidworks.JKL.Editor; // Access ImporterUtils
+using Droidworks.JKL.Editor;
 
 namespace Droidworks.ThreeDO.Editor
 {
@@ -39,7 +39,6 @@ namespace Droidworks.ThreeDO.Editor
                 string matName = model.Materials[i];
                 string jmatName = Path.ChangeExtension(matName, ".jmat");
 
-                // Try to find it
                 string path = ImporterUtils.FindFile(ctx.assetPath, matName, jmatName);
                 Material unityMat = null;
                 int w=64, h=64;
@@ -82,7 +81,6 @@ namespace Droidworks.ThreeDO.Editor
 
                         ImporterUtils.DisableShininess(unityMat, isURP);
                         
-                        // Transparency check (if transparent flag or name)
                         if (t.Transparent)
                         {
                             ImporterUtils.SetupCutoutMaterial(unityMat, isURP);
@@ -105,39 +103,45 @@ namespace Droidworks.ThreeDO.Editor
             // Create Root
             GameObject rootVal = new GameObject(model.Name);
             
-            // Create Nodes
+            // 1. Create All Nodes first (to support arbitrary parent indices)
             var nodeGOs = new GameObject[model.Nodes.Count];
             for(int i=0; i<model.Nodes.Count; i++)
             {
                 var node = model.Nodes[i];
                 var go = new GameObject(node.Name);
                 nodeGOs[i] = go;
-                
-                // Position/Rot
-                // Swap Y/Z for Position (Z-up to Y-up)
-                go.transform.localPosition = new Vector3(node.Position.x, node.Position.z, node.Position.y);
-                
-                // Rotation
-                // 3DO Rotation (Euler degrees)
-                // Typically: Pitch (X), Yaw (Y), Roll (Z) in 3DO space
-                // Mapping to Unity Y-up: 
-                // 3DO Z-axis is Unity Y-axis.
-                // 3DO Y-axis is Unity Z-axis.
-                // 3DO X-axis is Unity X-axis.
-                // Basic mapping: X -> X, Y -> Z, Z -> Y
-                go.transform.localRotation = Quaternion.Euler(node.Rotation.x, node.Rotation.z, node.Rotation.y); 
-                
-                // Pivot? 3DO Nodes have a separate Pivot. 
-                // Unity Transforms are pivot-based. If 3DO has a pivot offset, we might need a child or offset the mesh.
-                // For now, ignore pivot or assume it's the transform origin.
             }
             
-            // Hierarchy
+            // 2. Setup Transform & Hierarchy
             for(int i=0; i<model.Nodes.Count; i++)
             {
                 var node = model.Nodes[i];
                 var go = nodeGOs[i];
-                if (node.ParentIndex >= 0 && node.ParentIndex < nodeGOs.Length && node.ParentIndex != i) // Prevent self-parenting loop
+                
+                // Position (Swap Y/Z)
+                go.transform.localPosition = new Vector3(node.Position.x, node.Position.z, node.Position.y);
+                // Rotation
+                // 3DO (Right Handed Z-up):
+                // Pitch (X), Yaw (Z), Roll (Y) - Based on Assasin.3do and Blender Importer structure
+                // Blender applies: RotZ(yaw) * RotX(pitch) * RotY(roll)
+                
+                // Unity (Left Handed Y-up):
+                // Map Axes: 3DO-X -> Unity-X, 3DO-Z -> Unity-Y, 3DO-Y -> Unity-Z
+                // Negate angles for coordinate system change
+                
+                float rX = -node.Rotation.x; // Pitch
+                float rY = -node.Rotation.y; // Yaw
+                float rZ = -node.Rotation.z; // Roll
+                
+                // Construct Rotation: Yaw(Y) * Pitch(X) * Roll(Z)
+                Quaternion qPitch = Quaternion.AngleAxis(rX, Vector3.right);
+                Quaternion qYaw = Quaternion.AngleAxis(rY, Vector3.up);
+                Quaternion qRoll = Quaternion.AngleAxis(rZ, Vector3.forward);
+                
+                go.transform.localRotation = qYaw * qPitch * qRoll;
+
+                // Hierarchy
+                if (node.ParentIndex >= 0 && node.ParentIndex < nodeGOs.Length && node.ParentIndex != i)
                 {
                     go.transform.SetParent(nodeGOs[node.ParentIndex].transform, false);
                 }
@@ -150,8 +154,12 @@ namespace Droidworks.ThreeDO.Editor
                 if (node.MeshIndex >= 0 && node.MeshIndex < model.Meshes.Count)
                 {
                     var meshDef = model.Meshes[node.MeshIndex];
-                    var (unityMesh, unityMats) = BuildUnityMesh(meshDef, mats);
-                    unityMesh.name = $"{meshDef.Name}_{i}"; // Unique name per node usage
+                    
+                    // PASS PIVOT to Mesh Builder
+                    Vector3 pivotUnity = new Vector3(node.Pivot.x, node.Pivot.z, node.Pivot.y);
+                    
+                    var (unityMesh, unityMats) = BuildUnityMesh(meshDef, mats, pivotUnity);
+                    unityMesh.name = $"{meshDef.Name}_{i}"; 
                     ctx.AddObjectToAsset($"mesh_{node.MeshIndex}_{i}", unityMesh); 
                     
                     var mf = go.AddComponent<MeshFilter>();
@@ -165,15 +173,13 @@ namespace Droidworks.ThreeDO.Editor
             ctx.SetMainObject(rootVal);
         }
 
-        private (Mesh, Material[]) BuildUnityMesh(ThreeDOMesh meshDef, Dictionary<int, (Material, int, int)> mats)
+        private (Mesh, Material[]) BuildUnityMesh(ThreeDOMesh meshDef, Dictionary<int, (Material, int, int)> mats, Vector3 pivotOffset)
         {
             var mesh = new Mesh();
-            var submeshes = new Dictionary<int, List<int>>(); // MatIndex -> Indices
+            var submeshes = new Dictionary<int, List<int>>();
             
             var newVerts = new List<Vector3>();
             var newUVs = new List<Vector2>();
-            
-            // 3DO shares vertices but we must split for Unity UVs
             
             foreach(var face in meshDef.Faces)
             {
@@ -181,12 +187,9 @@ namespace Droidworks.ThreeDO.Editor
                 if(!submeshes.ContainsKey(matIdx)) submeshes[matIdx] = new List<int>();
                 var tris = submeshes[matIdx];
                 
-                // Retrieve Texture size
                 float w = 64f, h = 64f;
                 if(mats.ContainsKey(matIdx)) { w = mats[matIdx].Item2; h = mats[matIdx].Item3; }
                 
-                // Fan Triangulation (Standard for simple polygons)
-                // Create vertices for this face
                 int[] currentIndices = new int[face.VertexIndices.Count];
                 for(int k=0; k<face.VertexIndices.Count; k++)
                 {
@@ -194,11 +197,12 @@ namespace Droidworks.ThreeDO.Editor
                     int uvIdx = (k < face.UVIndices.Count) ? face.UVIndices[k] : 0;
                     
                     Vector3 vRaw = meshDef.Vertices[vIdx];
-                    // Swap Y/Z for Unity Mesh
                     Vector3 v = new Vector3(vRaw.x, vRaw.z, vRaw.y);
                     
+                    // APPLY PIVOT OFFSET
+                    v += pivotOffset; 
+                    
                     Vector2 uvRaw = (uvIdx < meshDef.UVs.Count) ? meshDef.UVs[uvIdx] : Vector2.zero;
-                    // Pixel UVs -> 0-1 UVs
                     Vector2 uv = new Vector2(uvRaw.x / w, uvRaw.y / h);
                     
                     newVerts.Add(v);
@@ -206,23 +210,17 @@ namespace Droidworks.ThreeDO.Editor
                     currentIndices[k] = newVerts.Count - 1;
                 }
                 
-                // Triangulate
                 for(int k=1; k<currentIndices.Length-1; k++)
                 {
                     tris.Add(currentIndices[0]);
                     tris.Add(currentIndices[k+1]); 
-                    tris.Add(currentIndices[k]); // Clockwise for Unity? 3DO is usually CCW?
-                    // Unity is clockwise? No, Unity is clockwise backface culling (so visible is clockwise).
-                    // If 0, 1, 2 is the order. 
-                    // Let's try 0, k+1, k.
+                    tris.Add(currentIndices[k]);
                 }
             }
             
             mesh.SetVertices(newVerts);
             mesh.SetUVs(0, newUVs);
             
-            // Sort mat indices to ensure consistent submesh order?
-            // Not strictly necessary but good for stability.
             var sortedKeys = new List<int>(submeshes.Keys);
             sortedKeys.Sort();
 
@@ -234,7 +232,7 @@ namespace Droidworks.ThreeDO.Editor
                 int matIdx = sortedKeys[i];
                 mesh.SetTriangles(submeshes[matIdx], i);
                 if (mats.ContainsKey(matIdx)) outMats[i] = mats[matIdx].Item1;
-                else {/* fallback? should be created as missing already */}
+                else {/* fallback? */}
             }
             
             mesh.RecalculateNormals();
