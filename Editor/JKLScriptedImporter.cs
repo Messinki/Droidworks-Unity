@@ -63,7 +63,7 @@ namespace Droidworks.JKL.Editor
                     {
                         // Parse JMAT
                         var matParser = new MatParser(palette);
-                        List<MatParser.MatTexture> textures = null;
+                        List<MatTexture> textures = null;
                         try { textures = matParser.Parse(jmatPath); }
                         catch (System.Exception e) { Debug.LogError($"[JKLImporter] Failed to parse {jmatName}: {e}"); }
 
