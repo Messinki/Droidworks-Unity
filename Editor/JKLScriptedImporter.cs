@@ -39,97 +39,64 @@ namespace Droidworks.JKL.Editor
             Shader defaultShader = GetDefaultShader();
             bool isURP = IsURP();
             Debug.Log($"[JKLImporter] Render Pipeline: {(isURP ? "URP" : "Standard")}");
-
+            
             for (int i = 0; i < model.Materials.Count; i++)
             {
                 var jklMat = model.Materials[i];
-                string jmatName = Path.ChangeExtension(jklMat.Name, ".jmat");
-                
                 Material unityMat = null;
                 int w = 64, h = 64; // Default size
 
-                // 3a. Special Case: Mat 0 (Sky/Clip) - Transparent
-                if (i == 0)
+                // Try to find material file
+                // The FindFile method signature has changed in the provided diff.
+                // Assuming the new FindFile returns (path, width, height)
+                var (matFile, foundWidth, foundHeight) = FindFile(jklMat.Name, ctx.assetPath);
+                
+                if (!string.IsNullOrEmpty(matFile))
                 {
-                    unityMat = CreateTransparentMaterial(jklMat.Name, defaultShader, isURP);
-                    Debug.Log($"[JKLImporter] Mat 0 (Sky/Clip): {unityMat.name}");
+                    var mParser = new Droidworks.JKL.MatParser(matFile, palette);
+                    var textures = mParser.Parse();
                     
-                    // Save the dummy texture we assigned to Mat 0
-                    if (unityMat.mainTexture != null)
+                    if (textures.Count > 0)
                     {
-                         ctx.AddObjectToAsset($"tex_0", unityMat.mainTexture);
-                    }
-                }
-                else
-                {
-                    // 3b. Find .jmat file
-                    string jmatPath = FindFile(ctx.assetPath, jklMat.Name, jmatName);
-                    
-                    if (!string.IsNullOrEmpty(jmatPath))
-                    {
-                        // Parse JMAT
-                        var matParser = new MatParser(palette);
-                        List<MatTexture> textures = null;
-                        try { textures = matParser.Parse(jmatPath); }
-                        catch (System.Exception e) { Debug.LogError($"[JKLImporter] Failed to parse {jmatName}: {e}"); }
-
-                        if (textures == null || textures.Count == 0)
+                        var texData = textures[0];
+                        w = texData.Width; // Update w/h for UV normalization
+                        h = texData.Height;
+                        
+                        // Create Texture
+                        var texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
+                        texture.name = texData.Name;
+                        texture.SetPixelData(texData.Pixels, 0);
+                        texture.filterMode = FilterMode.Point;
+                        texture.wrapMode = TextureWrapMode.Repeat;
+                        texture.Apply();
+                        
+                        // Create Material
+                        unityMat = new Material(defaultShader);
+                        unityMat.name = jklMat.Name;
+                        
+                        if (isURP)
                         {
-                             Debug.LogWarning($"[JKLImporter] JMAT parsed 0 textures: {jmatPath}");
+                            unityMat.SetTexture("_BaseMap", texture);
+                            unityMat.SetColor("_BaseColor", Color.white);
+                            unityMat.SetTexture("_MainTex", texture);
                         }
-
-                        if (textures != null && textures.Count > 0)
+                        else
                         {
-                            var texData = textures[0];
-                            w = texData.Width;
-                            h = texData.Height;
-                            
-                            // Debug.Log($"[JKLImporter] Texture: {texData.Name} ({w}x{h}, Trans:{texData.Transparent}). First Px: {texData.Pixels[0]}");
-
-                            // Create Texture
-                            var texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
-                            texture.name = texData.Name;
-                            texture.filterMode = FilterMode.Point; 
-                            texture.SetPixels32(texData.Pixels);
-                            texture.Apply();
-
-                            // Verify Shader
-                            if (defaultShader == null) Debug.LogError("[JKLImporter] Shader is NULL!");
-
-                            // Create Material
-                            unityMat = new Material(defaultShader);
-                            unityMat.name = texData.Name;
-                            
-                            // Assign Texture (Pipeline Dependent)
-                            if (isURP)
-                            {
-                                unityMat.SetTexture("_BaseMap", texture);
-                                unityMat.SetColor("_BaseColor", Color.white);
-                                // Safety: Set _MainTex too, just in case
-                                unityMat.SetTexture("_MainTex", texture);
-                            }
-                            else
-                            {
-                                unityMat.mainTexture = texture;
-                                unityMat.color = Color.white;
-                            }
-                            
-                            // Retro Matte Look
-                            DisableShininess(unityMat, isURP);
-                            
-                            // CRITICAL: Add texture to asset context so it is saved!
-                            ctx.AddObjectToAsset($"tex_{i}", texture);
-
-                            // Transparency
-                            if (texData.Transparent)
-                            {
-                                SetupCutoutMaterial(unityMat, isURP);
-                            }
+                            unityMat.mainTexture = texture;
+                            unityMat.color = Color.white;
                         }
-                    }
-                    else
-                    {
-                         Debug.LogWarning($"[JKLImporter] Missing JMAT: {jklMat.Name} (looked for {jmatName})");
+                        
+                        // Retro Matte Look
+                        DisableShininess(unityMat, isURP);
+                        
+                        // Add texture to asset
+                        ctx.AddObjectToAsset($"tex_{i}", texture);
+
+                        // Transparency
+                        if (texData.Transparent)
+                        {
+                            SetupCutoutMaterial(unityMat, isURP);
+                        }
                     }
                 }
 
@@ -156,12 +123,16 @@ namespace Droidworks.JKL.Editor
             var surfacesByMat = new Dictionary<int, List<Droidworks.JKL.JKLSurface>>();
             foreach(var s in model.Surfaces)
             {
+                // Logic Update:
+                // -1 implies "No Material" or "Clip/Sky".
+                // We should NOT map it to 0, because Mat 0 might be a valid texture (e.g. cratemag.mat).
+                // Instead, we will handle key -1 explicitly as an invisible material.
+                
                 int effectiveIndex = s.MaterialIndex;
-                if (effectiveIndex < 0 || effectiveIndex >= model.Materials.Count)
+                if (effectiveIndex < -1 || effectiveIndex >= model.Materials.Count)
                 {
-                    // Fallback to Material 0 (Sky/Clip) to match Blender behavior (default logic)
-                    // This prevents holes in the mesh for invalid surfaces
-                    effectiveIndex = 0;
+                    // If truly out of bounds (<-1 or >Count), map to -1 (Invisible)
+                    effectiveIndex = -1;
                 }
                 
                 if(!surfacesByMat.ContainsKey(effectiveIndex)) surfacesByMat[effectiveIndex] = new List<Droidworks.JKL.JKLSurface>();
