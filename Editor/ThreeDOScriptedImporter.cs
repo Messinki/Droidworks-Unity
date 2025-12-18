@@ -59,6 +59,7 @@ namespace Droidworks.ThreeDO.Editor
                         var tex2D = new Texture2D(w, h, TextureFormat.RGBA32, false);
                         tex2D.name = t.Name;
                         tex2D.filterMode = FilterMode.Point;
+                        tex2D.wrapMode = TextureWrapMode.Repeat;
                         tex2D.SetPixels32(t.Pixels);
                         tex2D.Apply();
                         
@@ -203,7 +204,8 @@ namespace Droidworks.ThreeDO.Editor
                     v += pivotOffset; 
                     
                     Vector2 uvRaw = (uvIdx < meshDef.UVs.Count) ? meshDef.UVs[uvIdx] : Vector2.zero;
-                    Vector2 uv = new Vector2(uvRaw.x / w, uvRaw.y / h);
+                    // Pixel UVs -> 0-1 UVs. Negate Y because 3DO uses negative Y (down) and Unity texture is physically flipped by SetPixels.
+                    Vector2 uv = new Vector2(uvRaw.x / w, -uvRaw.y / h);
                     
                     newVerts.Add(v);
                     newUVs.Add(uv);
