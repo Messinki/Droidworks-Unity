@@ -343,6 +343,7 @@ namespace Droidworks.JKL.Editor
             var candidates = new List<string>();
             candidates.Add(dir);
             candidates.Add(Path.Combine(dir, "mat"));
+            candidates.Add(Path.Combine(dir, "3do", "mat")); // Added this line
             
             // Parent check (for ../mat)
             string parent = Path.GetDirectoryName(dir);
