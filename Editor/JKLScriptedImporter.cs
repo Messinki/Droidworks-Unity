@@ -25,6 +25,8 @@ namespace Droidworks.JKL.Editor
 
             // 1. Find and Load Colormap (Try "mission.cmp" in standard paths)
             CmpPalette palette = FindAndLoadPalette(ctx.assetPath);
+            if (palette == null) Debug.LogError($"[JKLImporter] Failed to find palette for {ctx.assetPath}");
+            else Debug.Log($"[JKLImporter] Loaded palette from {palette.Name}");
 
             // 2. Load Materials
             // Map JKL Material Index -> (Material, TextureWidth, TextureHeight)
@@ -86,7 +88,17 @@ namespace Droidworks.JKL.Editor
                         
                         unityMat = new Material(GetDefaultShader());
                         unityMat.name = texData.Name;
-                        unityMat.mainTexture = texture;
+                        
+                        // Fix for URP Texture Assignment
+                        if (IsURP())
+                        {
+                            unityMat.SetTexture("_BaseMap", texture);
+                            unityMat.color = Color.white; // Ensure tint is white
+                        }
+                        else
+                        {
+                            unityMat.mainTexture = texture;
+                        }
                         
                         // Handle Transparency (if flagged in MAT)
                         if (texData.Transparent)
@@ -104,6 +116,10 @@ namespace Droidworks.JKL.Editor
                             }
                         }
                     }
+                }
+                else
+                {
+                    Debug.LogWarning($"[JKLImporter] Could not find .jmat file for material: {jklMat.Name} -> {jmatName}");
                 }
 
                 if (unityMat == null)
