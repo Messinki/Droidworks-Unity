@@ -107,6 +107,9 @@ namespace Droidworks.JKL.Editor
                                 unityMat.mainTexture = texture;
                                 unityMat.color = Color.white;
                             }
+                            
+                            // CRITICAL: Add texture to asset context so it is saved!
+                            ctx.AddObjectToAsset($"tex_{i}", texture);
 
                             // Transparency
                             if (texData.Transparent)
