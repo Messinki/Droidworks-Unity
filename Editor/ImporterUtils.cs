@@ -57,10 +57,11 @@ namespace Droidworks.JKL.Editor
             string baseDir = Path.GetDirectoryName(assetPath);
             string parentDir = Path.GetDirectoryName(baseDir);
 
-            // Paths from Blender Addon (ImportSithJKL.py)
+            // Paths from Blender Addon + Logic for 3DOs
             var paths = new List<string>();
             paths.Add(baseDir);
             paths.Add(Path.Combine(baseDir, "mat"));
+            paths.Add(Path.Combine(baseDir, "3do")); 
             paths.Add(Path.Combine(baseDir, "3do", "mat"));
             
             if(!string.IsNullOrEmpty(parentDir))
@@ -69,21 +70,36 @@ namespace Droidworks.JKL.Editor
                 paths.Add(Path.Combine(parentDir, "3do", "mat"));
             }
 
-            // Allow loose checking
+            // Expanded Search for 3DOs in subfolders (one level deep, or all?)
+            // Blender searches standard paths + 1 level deep in those paths.
+            // We'll search recursively in "3do" folder if found.
+            var recursivePaths = new List<string>();
+            string threeDoDir = Path.Combine(baseDir, "3do");
+            if (Directory.Exists(threeDoDir)) recursivePaths.Add(threeDoDir);
+
+            var targets = new List<string>();
+            if(!string.IsNullOrEmpty(jmatName)) targets.Add(jmatName);
+            if(!string.IsNullOrEmpty(jklName)) targets.Add(jklName);
+
+            // 1. Check direct paths
             foreach(var p in paths)
             {
                 if (!Directory.Exists(p)) continue;
                 
-                var files = Directory.GetFiles(p);
-                foreach(var f in files)
+                foreach(var target in targets)
                 {
-                    string fname = Path.GetFileName(f);
-                    // Check intersection of names provided
-                    if ((!string.IsNullOrEmpty(jmatName) && fname.Equals(jmatName, System.StringComparison.OrdinalIgnoreCase)) ||
-                        (!string.IsNullOrEmpty(jklName) && fname.Equals(jklName, System.StringComparison.OrdinalIgnoreCase)))
-                    {
-                        return f;
-                    }
+                    string fullPath = Path.Combine(p, target);
+                    if (File.Exists(fullPath)) return fullPath;
+                }
+            }
+            
+            // 2. Recursive search in 3do folder (common for categorized assets)
+            foreach(var p in recursivePaths)
+            {
+                foreach(var target in targets)
+                {
+                    var found = Directory.GetFiles(p, target, SearchOption.AllDirectories);
+                    if (found.Length > 0) return found[0];
                 }
             }
              

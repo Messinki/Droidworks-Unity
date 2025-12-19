@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEditor;
 using UnityEditor.AssetImporters;
 using System.IO;
 using System.Collections.Generic;
@@ -233,10 +234,104 @@ namespace Droidworks.JKL.Editor
             var mr = go.AddComponent<MeshRenderer>();
             mr.sharedMaterials = materialsForRenderer.ToArray();
 
+            // 6. Instantiate Things
+            InstantiateThings(ctx, model, go);
+
             ctx.AddObjectToAsset("main", go);
             ctx.SetMainObject(go);
             
             Debug.Log("[JKLImporter] Import Complete.");
+        }
+
+        private void InstantiateThings(AssetImportContext ctx, JKLModel model, GameObject root)
+        {
+            if (model.Things.Count == 0) return;
+
+            var thingsRoot = new GameObject("Things");
+            thingsRoot.transform.SetParent(root.transform, false);
+
+            var templatePrefabs = new Dictionary<string, GameObject>();
+
+            // Pre-load templates
+            foreach (var kvp in model.Templates)
+            {
+                var tmpl = kvp.Value;
+                if (string.IsNullOrEmpty(tmpl.Model3D)) continue;
+
+                // Find 3DO
+                // We assume Model3D has extension. If not, we might need to append it? 
+                // JKL usually has "file.3do".
+                string path = ImporterUtils.FindFile(ctx.assetPath, tmpl.Model3D, null); 
+                
+                if (!string.IsNullOrEmpty(path))
+                {
+                     // Convert absolute path to relative for AssetDatabase
+                     if (path.StartsWith(Application.dataPath)) {
+                         path = "Assets" + path.Substring(Application.dataPath.Length);
+                     }
+                     
+                     var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                     if (prefab != null)
+                     {
+                         templatePrefabs[kvp.Key] = prefab;
+                         ctx.DependsOnSourceAsset(path);
+                     }
+                     else
+                     {
+                         Debug.LogError($"[JKLImporter] Failed to load 3DO prefab at {path}");
+                     }
+                }
+                else
+                {
+                    // Check standard library or search deeper? User said "do not rely on fallbacks".
+                    Debug.LogError($"[JKLImporter] Could not find 3DO file: {tmpl.Model3D} for template {tmpl.Name}");
+                }
+            }
+
+            // Instantiate Things
+            var nameCounts = new Dictionary<string, int>();
+
+            foreach (var thing in model.Things)
+            {
+                GameObject instance = null;
+                
+                // Get Template
+                if (model.Templates.TryGetValue(thing.TemplateName, out JKLTemplate tmpl))
+                {
+                     if (templatePrefabs.TryGetValue(thing.TemplateName, out GameObject prefab))
+                     {
+                         instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+                     }
+                }
+                
+                if (instance == null)
+                {
+                    // Create empty for missing thing (so we can see it exists)
+                    instance = new GameObject(thing.Name + " (MISSING)");
+                }
+
+                instance.transform.SetParent(thingsRoot.transform, false);
+                
+                // Transform
+                instance.transform.position = ImporterUtils.SithToUnityPosition(thing.Position);
+                instance.transform.rotation = ImporterUtils.SithToUnityRotation(thing.Rotation);
+
+                // Naming
+                string name = thing.Name;
+                // If name is empty, use template name
+                if (string.IsNullOrEmpty(name)) name = thing.TemplateName;
+                
+                if (nameCounts.ContainsKey(name))
+                {
+                    nameCounts[name]++;
+                    instance.name = $"{name} {nameCounts[name]}";
+                }
+                else
+                {
+                    nameCounts[name] = 0;
+                    instance.name = name;
+                }
+            }
         }
 
         // --- Helper Methods ---
